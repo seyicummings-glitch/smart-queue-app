@@ -1,28 +1,92 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  SafeAreaView, StatusBar, Animated, Alert,
+  StatusBar, Animated, Alert, ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppContext } from '@/context/AppContext';
+import { api } from '@/lib/api';
+
+type QueueTicketResponse = {
+  id: number;
+  ticket_number: string;
+  service_name: string;
+  branch_name: string;
+  status: 'waiting' | 'serving' | 'completed' | 'cancelled';
+  position: number;
+  estimated_wait: number;
+  issued_at: string;
+  called_at: string | null;
+  completed_at: string | null;
+  ahead_tickets: string[];
+};
+
+function fmt12h(iso: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${h > 12 ? h - 12 : h === 0 ? 12 : h}:${m} ${h >= 12 ? 'PM' : 'AM'}`;
+}
+
+function calcReadyTime(waitMins: number): string {
+  const ready = new Date(Date.now() + waitMins * 60_000);
+  const h = ready.getHours();
+  const m = String(ready.getMinutes()).padStart(2, '0');
+  return `${h > 12 ? h - 12 : h === 0 ? 12 : h}:${m} ${h >= 12 ? 'PM' : 'AM'}`;
+}
 
 export default function CustomerTicket() {
   const router = useRouter();
   const { activeTicket, setActiveTicket } = useAppContext();
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.05, duration: 900, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1,    duration: 900, useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
+  const [apiTicket, setApiTicket] = useState<QueueTicketResponse | null>(null);
+  const [loadingTicket, setLoadingTicket] = useState(true);
+
+  // Fetch real ticket from backend on mount and every 15 s
+  const fetchTicket = useCallback(async () => {
+    const { data } = await api.get<QueueTicketResponse>('/queues/my-ticket/');
+    if (data) {
+      setApiTicket(data);
+      // Keep AppContext in sync so other pages reflect current state
+      setActiveTicket(prev => prev ? {
+        ...prev,
+        ticketId:     data.id,
+        ticketNumber: data.ticket_number,
+        waitTime:     data.estimated_wait,
+        peopleAhead:  Math.max(0, data.position - 1),
+        status:       data.status === 'cancelled' ? 'completed' : data.status,
+        aheadTickets: data.ahead_tickets,
+      } : prev);
+    }
+    setLoadingTicket(false);
   }, []);
 
+  useEffect(() => {
+    fetchTicket();
+    const interval = setInterval(fetchTicket, 15_000);
+    return () => clearInterval(interval);
+  }, [fetchTicket]);
+
+  // Pulse animation
+  useEffect(() => {
+    const st = apiTicket?.status ?? activeTicket?.status;
+    if (st === 'waiting' || st === 'serving') {
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.05, duration: 900, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1,    duration: 900, useNativeDriver: true }),
+        ])
+      );
+      loop.start();
+      return () => loop.stop();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [apiTicket?.status, activeTicket?.status]);
 
   const handleLeave = () => {
     Alert.alert('Leave Queue', 'Cancel your ticket and leave the queue?', [
@@ -30,17 +94,51 @@ export default function CustomerTicket() {
       {
         text: 'Leave',
         style: 'destructive',
-        onPress: () => {
-          const industry = activeTicket?.industry?.toLowerCase() ?? 'banking';
+        onPress: async () => {
+          const ticketId = apiTicket?.id ?? activeTicket?.ticketId;
+          if (ticketId) {
+            await api.post(`/queues/${ticketId}/cancel/`, {});
+          }
           setActiveTicket(null);
-          router.replace(`/customer/service/${industry}` as any);
+          router.replace('/customer/home' as any);
         },
       },
     ]);
   };
 
+  // Use API data as source of truth; fall back to AppContext while loading
+  const ticket = apiTicket ?? activeTicket;
+  const ticketNumber = apiTicket?.ticket_number ?? activeTicket?.ticketNumber ?? '';
+  const serviceName  = apiTicket?.service_name  ?? activeTicket?.service ?? '';
+  const branchName   = apiTicket?.branch_name   ?? activeTicket?.branch  ?? '';
+  const industryName = activeTicket?.industry ?? '';
+  const waitMins     = apiTicket?.estimated_wait ?? activeTicket?.waitTime ?? 0;
+  const peopleAhead  = apiTicket ? Math.max(0, apiTicket.position - 1) : (activeTicket?.peopleAhead ?? 0);
+  const aheadTickets = apiTicket?.ahead_tickets ?? activeTicket?.aheadTickets ?? [];
+  const issuedAt     = apiTicket ? fmt12h(apiTicket.issued_at) : (activeTicket?.issuedAt ?? '—');
+  const currentStatus = apiTicket?.status ?? activeTicket?.status ?? 'waiting';
+
+  // ── Loading (first load, no context data either) ───────────────────────────
+  if (loadingTicket && !activeTicket) {
+    return (
+      <SafeAreaView style={styles.emptyContainer}>
+        <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/customer/home' as any)} style={styles.headerBackBtn}>
+            <MaterialIcons name="arrow-back" size={22} color="#0f172a" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>My Ticket</Text>
+          <View style={{ width: 36 }} />
+        </View>
+        <View style={styles.emptyContent}>
+          <ActivityIndicator size="large" color="#2563eb" />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   // ── No active ticket state ─────────────────────────────────────────────────
-  if (!activeTicket) {
+  if (!ticket && !loadingTicket) {
     return (
       <SafeAreaView style={styles.emptyContainer}>
         <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
@@ -61,35 +159,36 @@ export default function CustomerTicket() {
           </Text>
           <TouchableOpacity
             style={styles.emptyBtn}
-            onPress={() => router.push('/customer/home' as any)}
+            onPress={() => router.push('/customer/industries' as any)}
           >
             <MaterialIcons name="queue" size={18} color="#fff" />
             <Text style={styles.emptyBtnText}>Browse Services</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.emptyBtnOutline}
-            onPress={() => router.push('/customer/virtual-queue' as any)}
-          >
-            <Text style={styles.emptyBtnOutlineText}>Join Virtual Queue</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
   }
 
-  // ── Active ticket ─────────────────────────────────────────────────────────
+  const isActive = currentStatus === 'waiting' || currentStatus === 'serving';
+  const readyAt  = waitMins > 0 ? calcReadyTime(waitMins) : null;
+
+  // ── Active / recent ticket ─────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
 
       <View style={styles.topBar}>
-        <TouchableOpacity onPress={handleLeave} style={styles.closeBtn}>
+        <TouchableOpacity onPress={isActive ? handleLeave : () => router.replace('/customer/home' as any)} style={styles.closeBtn}>
           <MaterialIcons name="close" size={20} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.topBarTitle}>{activeTicket.industry} · {activeTicket.service}</Text>
-        <View style={styles.activePill}>
-          <View style={styles.activeDot} />
-          <Text style={styles.activeText}>Live</Text>
+        <Text style={styles.topBarTitle} numberOfLines={1}>
+          {industryName ? `${industryName} · ` : ''}{serviceName}
+        </Text>
+        <View style={[styles.activePill, !isActive && { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
+          <View style={[styles.activeDot, !isActive && { backgroundColor: '#94a3b8' }]} />
+          <Text style={styles.activeText}>
+            {currentStatus === 'serving' ? 'Now Serving' : currentStatus === 'completed' ? 'Done' : 'Live'}
+          </Text>
         </View>
       </View>
 
@@ -100,13 +199,23 @@ export default function CustomerTicket() {
           <View style={styles.notchLeft} />
           <View style={styles.notchRight} />
 
-          {/* Blue header section */}
-          <View style={styles.ticketHeader}>
+          {/* Header section */}
+          <View style={[
+            styles.ticketHeader,
+            currentStatus === 'serving'   && { backgroundColor: '#059669' },
+            currentStatus === 'completed' && { backgroundColor: '#475569' },
+            currentStatus === 'cancelled' && { backgroundColor: '#94a3b8' },
+          ]}>
             <Text style={styles.ticketLabel}>TICKET NUMBER</Text>
             <Animated.Text style={[styles.ticketNumber, { transform: [{ scale: pulseAnim }] }]}>
-              {activeTicket.ticketNumber}
+              {ticketNumber}
             </Animated.Text>
-            <Text style={styles.ticketSubtext}>Please wait — you will be called when it's your turn</Text>
+            <Text style={styles.ticketSubtext}>
+              {currentStatus === 'serving'   ? "It's your turn — please go to the counter" :
+               currentStatus === 'completed' ? 'Service completed — thank you!' :
+               currentStatus === 'cancelled' ? 'This ticket has been cancelled' :
+               'Please wait — you will be called when it\'s your turn'}
+            </Text>
           </View>
 
           {/* Dashed divider */}
@@ -117,22 +226,51 @@ export default function CustomerTicket() {
             <View style={styles.statItem}>
               <Text style={styles.statLabel}>Est. Wait</Text>
               <View style={styles.statValueRow}>
-                <Text style={styles.statValue}>{activeTicket.waitTime}</Text>
-                <Text style={styles.statUnit}> min</Text>
+                <Text style={styles.statValue}>
+                  {currentStatus === 'waiting' ? (waitMins > 0 ? waitMins : '<5') : '—'}
+                </Text>
+                {currentStatus === 'waiting' && <Text style={styles.statUnit}> min</Text>}
               </View>
+              {/* Ready at time — shown directly below Est. Wait */}
+              {currentStatus === 'waiting' && readyAt && (
+                <View style={styles.readyAtRow}>
+                  <MaterialIcons name="alarm" size={11} color="#059669" />
+                  <Text style={styles.readyAtText}>Ready ~{readyAt}</Text>
+                </View>
+              )}
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statItem}>
               <Text style={styles.statLabel}>Ahead of You</Text>
               <View style={styles.statValueRow}>
-                <Text style={styles.statValue}>{activeTicket.peopleAhead}</Text>
-                <Text style={styles.statUnit}> people</Text>
+                <Text style={styles.statValue}>{currentStatus === 'waiting' ? peopleAhead : '—'}</Text>
+                {currentStatus === 'waiting' && <Text style={styles.statUnit}> people</Text>}
               </View>
+              {currentStatus === 'waiting' && peopleAhead === 0 && (
+                <Text style={[styles.readyAtText, { color: '#2563eb' }]}>You're next!</Text>
+              )}
             </View>
           </View>
 
           {/* Dashed divider */}
           <View style={styles.dashed} />
+
+          {/* Ahead tickets list */}
+          {currentStatus === 'waiting' && aheadTickets.length > 0 && (
+            <View style={styles.aheadSection}>
+              <Text style={styles.aheadLabel}>Waiting before you</Text>
+              <View style={styles.aheadChips}>
+                {aheadTickets.map(tn => (
+                  <View key={tn} style={styles.aheadChip}>
+                    <Text style={styles.aheadChipText}>{tn}</Text>
+                  </View>
+                ))}
+                <View style={[styles.aheadChip, styles.aheadChipYou]}>
+                  <Text style={[styles.aheadChipText, { color: '#fff' }]}>{ticketNumber} (You)</Text>
+                </View>
+              </View>
+            </View>
+          )}
 
           {/* QR section */}
           <View style={styles.qrSection}>
@@ -142,51 +280,65 @@ export default function CustomerTicket() {
             <Text style={styles.qrHint}>Show this at the counter</Text>
           </View>
 
-          <Text style={styles.issuedAt}>Issued at {activeTicket.issuedAt}</Text>
+          <Text style={styles.issuedAt}>Issued at {issuedAt}</Text>
         </View>
 
         {/* ── Branch info ───────────────────────────────────── */}
         <View style={styles.locationCard}>
           <MaterialIcons name="place" size={22} color="#0d9488" />
           <View style={{ flex: 1 }}>
-            <Text style={styles.locationTitle}>{activeTicket.branch}</Text>
+            <Text style={styles.locationTitle}>{branchName}</Text>
             <Text style={styles.locationDesc}>
               Please stay nearby. You will be notified when your number is called.
             </Text>
           </View>
         </View>
 
-        {/* ── Track position ────────────────────────────────── */}
-        <TouchableOpacity
-          style={styles.trackBtn}
-          onPress={() => router.push('/customer/queue-status' as any)}
-          activeOpacity={0.85}
-        >
-          <MaterialIcons name="track-changes" size={18} color="#2563eb" />
-          <Text style={styles.trackText}>Track My Position Live</Text>
-          <MaterialIcons name="arrow-forward" size={16} color="#2563eb" />
-        </TouchableOpacity>
+        {/* ── Track position live ───────────────────────────── */}
+        {isActive && (
+          <TouchableOpacity
+            style={styles.trackBtn}
+            onPress={() => router.push('/customer/queue-status' as any)}
+            activeOpacity={0.85}
+          >
+            <MaterialIcons name="track-changes" size={18} color="#2563eb" />
+            <Text style={styles.trackText}>Track My Position Live</Text>
+            <MaterialIcons name="arrow-forward" size={16} color="#2563eb" />
+          </TouchableOpacity>
+        )}
 
         {/* ── Tips ──────────────────────────────────────────── */}
-        <View style={styles.tipsCard}>
-          <Text style={styles.tipsTitle}>While you wait…</Text>
-          {[
-            'You\'ll be notified when it\'s your turn.',
-            'You can move freely around the branch.',
-            'Keep your phone volume on for alerts.',
-          ].map((tip, i) => (
-            <View key={i} style={styles.tipRow}>
-              <MaterialIcons name="info-outline" size={14} color="#2563eb" />
-              <Text style={styles.tipText}>{tip}</Text>
-            </View>
-          ))}
-        </View>
+        {isActive && (
+          <View style={styles.tipsCard}>
+            <Text style={styles.tipsTitle}>While you wait…</Text>
+            {[
+              "You'll be notified when it's your turn.",
+              'You can move freely around the branch.',
+              'Keep your phone volume on for alerts.',
+              'This page refreshes every 15 seconds.',
+            ].map((tip, i) => (
+              <View key={i} style={styles.tipRow}>
+                <MaterialIcons name="info-outline" size={14} color="#2563eb" />
+                <Text style={styles.tipText}>{tip}</Text>
+              </View>
+            ))}
+          </View>
+        )}
 
-        {/* ── Leave queue ───────────────────────────────────── */}
-        <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave}>
-          <MaterialIcons name="exit-to-app" size={16} color="#e11d48" />
-          <Text style={styles.leaveText}>Leave Queue</Text>
-        </TouchableOpacity>
+        {/* ── Leave / Done ──────────────────────────────────── */}
+        {isActive ? (
+          <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave}>
+            <MaterialIcons name="exit-to-app" size={16} color="#e11d48" />
+            <Text style={styles.leaveText}>Leave Queue</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.homeBtn}
+            onPress={() => router.replace('/customer/home' as any)}
+          >
+            <Text style={styles.homeBtnText}>Back to Home</Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -215,11 +367,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28, paddingVertical: 14, marginTop: 8,
   },
   emptyBtnText: { fontSize: 15, fontWeight: '700', color: '#fff' },
-  emptyBtnOutline: {
-    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 14,
-    paddingHorizontal: 28, paddingVertical: 14, backgroundColor: '#fff',
-  },
-  emptyBtnOutlineText: { fontSize: 15, fontWeight: '600', color: '#64748b' },
 
   // Active ticket
   container: { flex: 1, backgroundColor: '#1e293b' },
@@ -249,12 +396,12 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 24, elevation: 10,
   },
   notchLeft: {
-    position: 'absolute', top: '52%', left: -14,
+    position: 'absolute', top: '50%', left: -14,
     width: 28, height: 28, borderRadius: 14,
     backgroundColor: '#1e293b', zIndex: 10,
   },
   notchRight: {
-    position: 'absolute', top: '52%', right: -14,
+    position: 'absolute', top: '50%', right: -14,
     width: 28, height: 28, borderRadius: 14,
     backgroundColor: '#1e293b', zIndex: 10,
   },
@@ -270,13 +417,28 @@ const styles = StyleSheet.create({
 
   dashed: { height: 1, borderStyle: 'dashed', borderWidth: 1, borderColor: '#e2e8f0', marginHorizontal: 20 },
 
-  statsRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 22, paddingHorizontal: 24 },
+  statsRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 20, paddingHorizontal: 24 },
   statItem: { flex: 1, alignItems: 'center', gap: 4 },
   statLabel: { fontSize: 10, fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.8 },
   statValueRow: { flexDirection: 'row', alignItems: 'baseline' },
   statValue: { fontSize: 30, fontWeight: '900', color: '#0f172a' },
   statUnit: { fontSize: 13, color: '#64748b', fontWeight: '500' },
-  statDivider: { width: 1, height: 44, backgroundColor: '#e2e8f0' },
+  statDivider: { width: 1, height: 44, backgroundColor: '#e2e8f0', marginTop: 20 },
+
+  // "Ready at" shown below Est. Wait
+  readyAtRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
+  readyAtText: { fontSize: 11, fontWeight: '700', color: '#059669' },
+
+  // Ahead tickets
+  aheadSection: { paddingHorizontal: 20, paddingVertical: 14, gap: 8 },
+  aheadLabel: { fontSize: 10, fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.8 },
+  aheadChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  aheadChip: {
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8,
+    backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0',
+  },
+  aheadChipYou: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
+  aheadChipText: { fontSize: 12, fontWeight: '700', color: '#475569' },
 
   qrSection: { alignItems: 'center', paddingVertical: 22, gap: 8 },
   qrBox: {
@@ -316,4 +478,10 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fff1f2',
   },
   leaveText: { fontSize: 14, fontWeight: '700', color: '#e11d48' },
+
+  homeBtn: {
+    alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 14, borderRadius: 14, backgroundColor: '#059669',
+  },
+  homeBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
 });

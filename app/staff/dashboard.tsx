@@ -1,562 +1,491 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  StatusBar,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  StatusBar, ActivityIndicator, Alert, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import SQMSHeader from '@/components/SQMSHeader';
 import BottomNav from '@/components/BottomNav';
+import { useAuth } from '@/context/AuthContext';
+import { api } from '@/lib/api';
 
 type IconName = React.ComponentProps<typeof MaterialIcons>['name'];
-type BusinessKey = 'banking' | 'healthcare' | 'retail' | 'government' | 'education' | 'corporate';
 
-type QueueItem = {
-  pos: number;
-  ticket: string;
-  type: string;
-  typeColor: 'orange' | 'slate' | 'blue' | 'green' | 'purple';
-  service: string;
-  wait: string;
-  customer: string;
-  tags: string[];
+type QueueTicket = {
+  id: number;
+  ticket_number: string;
+  customer_name: string;
+  service_name: string;
+  branch_name: string;
+  status: 'waiting' | 'serving' | 'completed' | 'cancelled';
+  position: number;
+  estimated_wait: number;
+  issued_at: string;
+  called_at: string | null;
+  notes: string;
 };
 
-type StaffProfile = {
-  name: string; initials: string; role: string;
-  branch: string; department: string; id: string; services: string[];
+type QueueStats = {
+  waiting: number;
+  serving: number;
+  completed: number;
+  avg_wait: number;
 };
 
-type BusinessData = {
-  staff: StaffProfile;
-  stats: { counter: string; inQueue: string; completed: string; avgTime: string };
-  queue: QueueItem[];
-};
+function initials(name: string) {
+  return name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
+}
 
-type BusinessCard = {
-  key: BusinessKey; label: string; icon: IconName;
-  iconColor: string; bg: string; desc: string;
-};
+function fmt12h(iso: string) {
+  const d = new Date(iso);
+  const h = d.getHours(), m = String(d.getMinutes()).padStart(2, '0');
+  return `${h > 12 ? h - 12 : h === 0 ? 12 : h}:${m} ${h >= 12 ? 'PM' : 'AM'}`;
+}
 
-const mockDataMap: Record<BusinessKey, BusinessData> = {
-  banking: {
-    staff: { name: 'Sarah Johnson', initials: 'SJ', role: 'Customer Service Representative', branch: 'Manhattan Financial Center', department: 'Account Services', id: 'BNK-2024-1156', services: ['Account Opening', 'General Banking Inquiry', 'Document Verification'] },
-    stats: { counter: '3', inQueue: '2', completed: '0', avgTime: '8' },
-    queue: [
-      { pos: 1, ticket: 'BAN-1024', type: 'Walk-In', typeColor: 'orange', service: 'Account Opening', wait: '16 mins', customer: 'Sarah Johnson', tags: ['Returning', 'Mobile App'] },
-      { pos: 2, ticket: 'BAN-1028', type: 'QR Code', typeColor: 'slate', service: 'Document Verification', wait: '23 mins', customer: 'Jessica Williams', tags: [] },
-    ],
-  },
-  healthcare: {
-    staff: { name: 'Dr. Michael Chen', initials: 'MC', role: 'Medical Services Coordinator', branch: 'Main Hospital - Downtown', department: 'Medical Services', id: 'HLC-2024-2487', services: ['General Consultation', 'Specialist Appointment', 'Lab Tests'] },
-    stats: { counter: '3', inQueue: '3', completed: '0', avgTime: '8' },
-    queue: [
-      { pos: 1, ticket: 'HEA-1024', type: 'Walk-In', typeColor: 'orange', service: 'General Consultation', wait: '6 mins', customer: 'Sarah Johnson', tags: ['Returning', 'Mobile App'] },
-      { pos: 2, ticket: 'HEA-1025', type: 'QR Code', typeColor: 'slate', service: 'Specialist Appointment', wait: '11 mins', customer: 'Michael Chen', tags: ['Transferred'] },
-      { pos: 3, ticket: 'HEA-1026', type: 'Web', typeColor: 'blue', service: 'Lab Tests', wait: '16 mins', customer: 'Emily Davis', tags: [] },
-    ],
-  },
-  retail: {
-    staff: { name: 'Emily Rodriguez', initials: 'ER', role: 'Customer Service Associate', branch: 'Flagship Store - Downtown', department: 'Customer Support', id: 'RTL-2024-3891', services: ['Product Return', 'Customer Service', 'Product Consultation'] },
-    stats: { counter: '3', inQueue: '3', completed: '12', avgTime: '5' },
-    queue: [
-      { pos: 1, ticket: 'RET-1024', type: 'Walk-In', typeColor: 'orange', service: 'Product Return', wait: '5 mins', customer: 'Tom Wilson', tags: ['VIP'] },
-      { pos: 2, ticket: 'RET-1025', type: 'QR Code', typeColor: 'slate', service: 'Customer Service', wait: '10 mins', customer: 'Karen Lee', tags: [] },
-    ],
-  },
-  government: {
-    staff: { name: 'James Wilson', initials: 'JW', role: 'Public Services Officer', branch: 'City Hall - Main Office', department: 'Licensing Services', id: 'GOV-2024-5623', services: ['License Renewal', 'Permit Application', 'General Inquiry'] },
-    stats: { counter: '7', inQueue: '2', completed: '9', avgTime: '15' },
-    queue: [
-      { pos: 1, ticket: 'GOV-1024', type: 'Walk-In', typeColor: 'orange', service: 'License Renewal', wait: '5 mins', customer: 'Anna Thompson', tags: [] },
-      { pos: 2, ticket: 'GOV-1025', type: 'QR Code', typeColor: 'slate', service: 'Permit Application', wait: '10 mins', customer: 'Mark Brown', tags: ['Documents Missing'] },
-    ],
-  },
-  education: {
-    staff: { name: 'Linda Martinez', initials: 'LM', role: 'Student Services Advisor', branch: 'Main Campus - Admissions', department: 'Admissions', id: 'EDU-2024-7845', services: ['Student Admissions', 'Academic Counseling', 'Registration Support'] },
-    stats: { counter: '4', inQueue: '3', completed: '6', avgTime: '10' },
-    queue: [
-      { pos: 1, ticket: 'EDU-1024', type: 'Walk-In', typeColor: 'orange', service: 'Student Admissions', wait: '5 mins', customer: 'Chris Evans', tags: ['Senior'] },
-    ],
-  },
-  corporate: {
-    staff: { name: 'David Kim', initials: 'DK', role: 'HR Business Partner', branch: 'HQ - Tower A, Floor 12', department: 'Human Resources', id: 'CRP-2024-0993', services: ['Onboarding', 'Benefits Enrollment', 'HR Consultations'] },
-    stats: { counter: '2', inQueue: '1', completed: '4', avgTime: '20' },
-    queue: [
-      { pos: 1, ticket: 'CRP-0056', type: 'Appointment', typeColor: 'blue', service: 'Onboarding', wait: '5 mins', customer: 'Samantha Green', tags: ['New Hire'] },
-    ],
-  },
-};
+function elapsed(iso: string) {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
 
-const BUSINESSES: BusinessCard[] = [
-  { key: 'banking',    label: 'Banking & Finance', icon: 'account-balance', iconColor: '#2563eb', bg: '#eff6ff', desc: 'Account services, loans, investments' },
-  { key: 'healthcare', label: 'Healthcare',         icon: 'favorite',        iconColor: '#e11d48', bg: '#fff1f2', desc: 'Medical appointments, consultations' },
-  { key: 'retail',     label: 'Retail',             icon: 'shopping-bag',    iconColor: '#d97706', bg: '#fffbeb', desc: 'Customer service, returns, support' },
-  { key: 'government', label: 'Government',         icon: 'gavel',           iconColor: '#4f46e5', bg: '#eef2ff', desc: 'Public services, permits, documentation' },
-  { key: 'education',  label: 'Education',          icon: 'school',          iconColor: '#059669', bg: '#ecfdf5', desc: 'Admissions, counseling, registration' },
-  { key: 'corporate',  label: 'Corporate Office',   icon: 'business',        iconColor: '#0d9488', bg: '#f0fdfa', desc: 'HR, IT support, facilities' },
-];
-
-const TYPE_COLOR: Record<string, { bg: string; text: string }> = {
-  orange: { bg: '#fff7ed', text: '#ea580c' },
-  slate:  { bg: '#f1f5f9', text: '#475569' },
-  blue:   { bg: '#eff6ff', text: '#2563eb' },
-  green:  { bg: '#f0fdf4', text: '#16a34a' },
-  purple: { bg: '#faf5ff', text: '#9333ea' },
-};
+function shiftTime(startMs: number) {
+  const s = Math.floor((Date.now() - startMs) / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h === 0) return `${m}m on duty`;
+  return `${h}h ${m}m on duty`;
+}
 
 export default function StaffDashboard() {
-  const [view, setView] = useState<'grid' | 'queue'>('grid');
-  const [selectedBusiness, setSelectedBusiness] = useState<BusinessKey | null>(null);
-  const [currentlyServing, setCurrentlyServing] = useState<QueueItem | null>(null);
-  const [isActive, setIsActive] = useState(true);
-  const [completedCounts, setCompletedCounts] = useState<Record<BusinessKey, number>>({
-    banking: 0, healthcare: 0, retail: 12, government: 9, education: 6, corporate: 4,
-  });
-  const [queueItems, setQueueItems] = useState<Record<BusinessKey, QueueItem[]>>(
-    Object.fromEntries(Object.entries(mockDataMap).map(([k, v]) => [k, v.queue])) as Record<BusinessKey, QueueItem[]>
-  );
+  const { user } = useAuth();
 
-  const handleSelectBusiness = (key: BusinessKey) => {
-    setSelectedBusiness(key);
-    setCurrentlyServing(null);
-    setView('queue');
-  };
+  const [waiting,  setWaiting]  = useState<QueueTicket[]>([]);
+  const [serving,  setServing]  = useState<QueueTicket | null>(null);
+  const [stats,    setStats]    = useState<QueueStats | null>(null);
+  const [loading,    setLoading]    = useState(true);
+  const [refresh,    setRefresh]    = useState(false);
+  const [active,     setActive]     = useState(true);
+  const [tick,       setTick]       = useState(0);
+  const [completing, setCompleting] = useState(false);
+  const [calling,    setCalling]    = useState<number | null>(null);
 
-  const handleCallNext = () => {
-    if (!selectedBusiness) return;
-    const queue = queueItems[selectedBusiness];
-    if (!queue.length) return;
-    setCurrentlyServing(queue[0]);
-    setQueueItems(prev => ({ ...prev, [selectedBusiness]: prev[selectedBusiness].slice(1) }));
-  };
+  const shiftStart = useRef(Date.now());
 
-  const handleCallNextFromList = (item: QueueItem) => {
-    if (!selectedBusiness) return;
-    setCurrentlyServing(item);
-    setQueueItems(prev => ({ ...prev, [selectedBusiness]: prev[selectedBusiness].filter(q => q.ticket !== item.ticket) }));
-  };
+  // Timer for elapsed display (serving card + shift time)
+  useEffect(() => {
+    const t = setInterval(() => setTick(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
 
-  const handleComplete = () => {
-    if (!selectedBusiness) return;
-    setCompletedCounts(prev => ({ ...prev, [selectedBusiness]: (prev[selectedBusiness] || 0) + 1 }));
-    setCurrentlyServing(null);
-  };
+  const fetchData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
 
-  const handleSkip = (item?: QueueItem) => {
-    if (!selectedBusiness) return;
-    if (item) {
-      setQueueItems(prev => {
-        const filtered = prev[selectedBusiness].filter(q => q.ticket !== item.ticket);
-        return { ...prev, [selectedBusiness]: [...filtered, item] };
-      });
-    } else if (currentlyServing) {
-      setQueueItems(prev => ({ ...prev, [selectedBusiness]: [...prev[selectedBusiness], currentlyServing] }));
-      setCurrentlyServing(null);
+    const [waitRes, servRes, statRes] = await Promise.all([
+      api.get<any>('/queues/?status=waiting'),
+      api.get<any>('/queues/?status=serving'),
+      api.get<QueueStats>('/queues/status/'),
+    ]);
+
+    const toArr = (d: any): QueueTicket[] =>
+      Array.isArray(d) ? d : (d?.results ?? []);
+
+    if (waitRes.data != null) setWaiting(toArr(waitRes.data));
+    const servArr = servRes.data != null ? toArr(servRes.data) : [];
+    setServing(servArr.length > 0 ? servArr[0] : null);
+    if (statRes.data) setStats(statRes.data);
+
+    setLoading(false);
+    setRefresh(false);
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(() => fetchData(true), 10_000);
+    return () => clearInterval(interval);
+  }, [fetchData]);
+
+  const handleCall = async (ticket: QueueTicket) => {
+    if (serving) {
+      Alert.alert('Already Serving', 'Complete or skip the current customer first.');
+      return;
     }
+    if (calling !== null) return;
+    setCalling(ticket.id);
+    const { error } = await api.post(`/queues/${ticket.id}/call/`, {});
+    setCalling(null);
+    if (error) { Alert.alert('Error', error); return; }
+    fetchData(true);
   };
 
-  const handleCancel = (item?: QueueItem) => {
-    if (!selectedBusiness) return;
-    if (item) {
-      setQueueItems(prev => ({ ...prev, [selectedBusiness]: prev[selectedBusiness].filter(q => q.ticket !== item.ticket) }));
-    } else {
-      setCurrentlyServing(null);
+  const handleComplete = async () => {
+    if (!serving || completing) return;
+    setCompleting(true);
+    setServing(null); // optimistic clear so button disappears immediately
+    const { error } = await api.post(`/queues/${serving.id}/complete/`, {});
+    setCompleting(false);
+    if (error) {
+      fetchData(true); // re-fetch to restore correct state if it failed
+      Alert.alert('Error', error);
+      return;
     }
+    fetchData(true);
   };
 
-  if (view === 'queue' && selectedBusiness) {
-    const data = mockDataMap[selectedBusiness];
-    const queue = queueItems[selectedBusiness];
-    const completed = completedCounts[selectedBusiness] || 0;
+  const handleCancel = async (ticket: QueueTicket) => {
+    Alert.alert('Cancel Ticket', `Cancel ${ticket.ticket_number}?`, [
+      { text: 'No',  style: 'cancel' },
+      { text: 'Yes, Cancel', style: 'destructive', onPress: async () => {
+        const { error } = await api.post(`/queues/${ticket.id}/cancel/`, {});
+        if (error) { Alert.alert('Error', error); return; }
+        fetchData(true);
+      }},
+    ]);
+  };
 
-    return (
-      <SafeAreaView style={styles.container} edges={['top']}>
-        <StatusBar barStyle="dark-content" backgroundColor="#fff" />
-        <SQMSHeader />
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.queueContent}>
-          {/* Back row */}
-          <View style={styles.backRow}>
-            <TouchableOpacity onPress={() => { setView('grid'); setSelectedBusiness(null); setCurrentlyServing(null); }} style={styles.backBtn}>
-              <MaterialIcons name="arrow-back" size={20} color="#334155" />
-            </TouchableOpacity>
-            <View>
-              <Text style={styles.queueTitle}>{BUSINESSES.find(b => b.key === selectedBusiness)?.label}</Text>
-              <Text style={styles.queueSubtitle}>Queue Management</Text>
-            </View>
+  const roleBadge = user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'superadmin'
+    ? { label: 'Admin', color: '#7c3aed', bg: '#f5f3ff' }
+    : { label: 'Staff',  color: '#2563eb', bg: '#eff6ff' };
+
+  const staffName = user?.full_name ?? 'Staff Member';
+
+  return (
+    <SafeAreaView style={s.container} edges={['top']}>
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      <SQMSHeader />
+
+      <ScrollView
+        contentContainerStyle={s.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refresh}
+            onRefresh={() => { setRefresh(true); fetchData(true); }}
+            tintColor="#2563eb"
+          />
+        }
+      >
+        {/* ── Staff identity card ─────────────────────────── */}
+        <View style={s.identityCard}>
+          <View style={s.avatarWrap}>
+            <Text style={s.avatarText}>{initials(staffName)}</Text>
           </View>
-
-          {/* Profile card */}
-          <View style={styles.profileCard}>
-            <View style={styles.profileTop}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{data.staff.initials}</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.profileName}>{data.staff.name}</Text>
-                <Text style={styles.profileRole}>{data.staff.role}</Text>
+          <View style={{ flex: 1, gap: 4 }}>
+            <View style={s.nameRow}>
+              <Text style={s.staffName} numberOfLines={1}>{staffName}</Text>
+              <View style={[s.roleBadge, { backgroundColor: roleBadge.bg }]}>
+                <Text style={[s.roleBadgeText, { color: roleBadge.color }]}>{roleBadge.label}</Text>
               </View>
             </View>
-            <View style={styles.profileGrid}>
-              <View style={styles.profileGridItem}>
-                <Text style={styles.profileGridLabel}>Branch</Text>
-                <Text style={styles.profileGridValue}>{data.staff.branch}</Text>
-              </View>
-              <View style={styles.profileGridItem}>
-                <Text style={styles.profileGridLabel}>Department</Text>
-                <Text style={styles.profileGridValue}>{data.staff.department}</Text>
-              </View>
-              <View style={styles.profileGridItem}>
-                <Text style={styles.profileGridLabel}>Employee ID</Text>
-                <Text style={styles.profileGridValue}>{data.staff.id}</Text>
-              </View>
-            </View>
-            <View style={styles.servicesRow}>
-              {data.staff.services.map(svc => (
-                <View key={svc} style={styles.serviceChip}>
-                  <Text style={styles.serviceChipText}>{svc}</Text>
-                </View>
-              ))}
-            </View>
+            <Text style={s.shiftText}>
+              {shiftTime(shiftStart.current)}
+            </Text>
           </View>
+          {/* Active / Break toggle */}
+          <TouchableOpacity
+            style={[s.statusToggle, active ? s.statusActive : s.statusBreak]}
+            onPress={() => setActive(p => !p)}
+          >
+            <View style={[s.statusDot, { backgroundColor: active ? '#10b981' : '#f59e0b' }]} />
+            <Text style={[s.statusToggleTxt, { color: active ? '#065f46' : '#92400e' }]}>
+              {active ? 'Active' : 'On Break'}
+            </Text>
+          </TouchableOpacity>
+        </View>
 
-          {/* Stats */}
-          <View style={styles.statsRow}>
+        {/* ── Stats row ───────────────────────────────────── */}
+        {loading && !stats ? (
+          <View style={s.loadingBox}>
+            <ActivityIndicator color="#2563eb" size="large" />
+          </View>
+        ) : (
+          <View style={s.statsRow}>
             {[
-              { label: 'Counter', value: data.stats.counter },
-              { label: 'In Queue', value: String(queue.length), highlight: true },
-              { label: 'Completed', value: String(completed) },
-              { label: 'Avg Time', value: `${data.stats.avgTime}m` },
-            ].map(s => (
-              <View key={s.label} style={[styles.statCard, s.highlight && styles.statCardHighlight]}>
-                <Text style={[styles.statValue, s.highlight && styles.statValueHighlight]}>{s.value}</Text>
-                <Text style={[styles.statLabel, s.highlight && styles.statLabelHighlight]}>{s.label}</Text>
+              { icon: 'people' as IconName,       label: 'Waiting',    value: String(stats?.waiting   ?? 0), color: '#2563eb', bg: '#eff6ff' },
+              { icon: 'person' as IconName,        label: 'Serving',    value: String(stats?.serving   ?? 0), color: '#059669', bg: '#ecfdf5' },
+              { icon: 'check-circle' as IconName,  label: 'Done Today', value: String(stats?.completed ?? 0), color: '#7c3aed', bg: '#f5f3ff' },
+              { icon: 'schedule' as IconName,      label: 'Avg Wait',   value: `${stats?.avg_wait ?? 0}m`,    color: '#d97706', bg: '#fffbeb' },
+            ].map(item => (
+              <View key={item.label} style={[s.statCard, { borderColor: item.bg }]}>
+                <View style={[s.statIconWrap, { backgroundColor: item.bg }]}>
+                  <MaterialIcons name={item.icon} size={16} color={item.color} />
+                </View>
+                <Text style={s.statValue}>{item.value}</Text>
+                <Text style={s.statLabel}>{item.label}</Text>
               </View>
             ))}
           </View>
+        )}
 
-          {/* Currently serving */}
-          <View style={styles.servingCard}>
-            <Text style={styles.servingHeading}>Currently Serving</Text>
-            {currentlyServing ? (
-              <>
-                <Text style={styles.servingTicket}>{currentlyServing.ticket}</Text>
-                <Text style={styles.servingCustomer}>{currentlyServing.customer}</Text>
-                <Text style={styles.servingService}>{currentlyServing.service}</Text>
-                <TouchableOpacity style={styles.completeBtn} onPress={handleComplete} activeOpacity={0.8}>
-                  <MaterialIcons name="check-circle" size={16} color="#fff" />
-                  <Text style={styles.completeBtnText}>Complete Service</Text>
-                </TouchableOpacity>
-                <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.skipBtn} onPress={() => handleSkip()} activeOpacity={0.8}>
-                    <Text style={styles.skipBtnText}>Skip Ticket</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.cancelBtn} onPress={() => handleCancel()} activeOpacity={0.8}>
-                    <Text style={styles.cancelBtnText}>Cancel Ticket</Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            ) : (
-              <>
-                <Text style={styles.servingEmpty}>No Customer Being Served</Text>
-                <Text style={styles.servingEmptySub}>Call the next customer to start serving</Text>
-                <TouchableOpacity
-                  style={[styles.callNextBtn, (!isActive || !queue.length) && styles.callNextBtnDisabled]}
-                  onPress={handleCallNext}
-                  disabled={!isActive || !queue.length}
-                  activeOpacity={0.8}
-                >
-                  <MaterialIcons name="play-circle-outline" size={18} color={isActive && queue.length ? '#2563eb' : '#94a3b8'} />
-                  <Text style={[styles.callNextBtnText, (!isActive || !queue.length) && styles.callNextBtnTextDisabled]}>
-                    {queue.length === 0 ? 'Queue Empty' : 'Call Next Customer'}
-                  </Text>
-                </TouchableOpacity>
-              </>
+        {/* ── Currently serving ───────────────────────────── */}
+        <View style={[s.servingCard, !active && s.servingCardInactive]}>
+          <View style={s.servingCardHeader}>
+            <View style={s.servingDotRow}>
+              <View style={[s.liveDot, !active && s.liveDotOff]} />
+              <Text style={s.servingCardTitle}>Currently Serving</Text>
+            </View>
+            {serving?.called_at && (
+              <Text style={s.servingTimer}>{elapsed(serving.called_at)}</Text>
             )}
           </View>
 
-          {/* Counter status */}
-          <View style={styles.counterCard}>
-            <View style={styles.counterTop}>
-              <View style={[styles.dot, { backgroundColor: isActive ? '#10b981' : '#94a3b8' }]} />
-              <Text style={styles.counterTitle}>Counter {data.stats.counter}</Text>
-            </View>
-            <View style={styles.counterToggleRow}>
-              <TouchableOpacity
-                style={[styles.toggleBtn, isActive && styles.toggleActive]}
-                onPress={() => setIsActive(true)}
-              >
-                <Text style={[styles.toggleText, isActive && styles.toggleTextActive]}>Active</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.toggleBtn, !isActive && styles.toggleInactive]}
-                onPress={() => setIsActive(false)}
-              >
-                <Text style={[styles.toggleText, !isActive && styles.toggleTextInactive]}>Not Active</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Waiting queue */}
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Waiting Queue</Text>
-            <View style={styles.badge}><Text style={styles.badgeText}>{queue.length} Waiting</Text></View>
-          </View>
-
-          {queue.length === 0 ? (
-            <View style={styles.emptyQueue}>
-              <MaterialIcons name="check-circle" size={36} color="#10b981" />
-              <Text style={styles.emptyQueueText}>Queue is currently empty</Text>
-            </View>
-          ) : (
-            queue.map(item => (
-              <WaitingItem
-                key={item.ticket}
-                item={item}
-                canCall={!currentlyServing && isActive}
-                onCall={() => handleCallNextFromList(item)}
-                onSkip={() => handleSkip(item)}
-                onCancel={() => handleCancel(item)}
-              />
-            ))
-          )}
-        </ScrollView>
-        <BottomNav />
-      </SafeAreaView>
-    );
-  }
-
-  // Grid view
-  const rows: BusinessCard[][] = [];
-  for (let i = 0; i < BUSINESSES.length; i += 2) rows.push(BUSINESSES.slice(i, i + 2));
-
-  return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
-      <SQMSHeader />
-      <ScrollView contentContainerStyle={styles.gridContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.gridPageHeader}>
-          <View>
-            <Text style={styles.gridTitle}>Workspace</Text>
-            <Text style={styles.gridSubtitle}>Manage active queues</Text>
-          </View>
-          <View style={styles.liveBadge}>
-            <View style={styles.liveDot} />
-            <Text style={styles.liveBadgeText}>Live</Text>
-          </View>
-        </View>
-
-        <View style={styles.chooseSectionHeader}>
-          <Text style={styles.chooseSectionTitle}>Choose a Business</Text>
-          <Text style={styles.chooseSectionSub}>Pick a service that makes your day simpler</Text>
-        </View>
-
-        <View style={styles.gridWrapper}>
-          {rows.map((row, ri) => (
-            <View key={ri} style={styles.gridRow}>
-              {row.map(biz => (
+          {serving ? (
+            <>
+              <Text style={s.servingTicketNum}>{serving.ticket_number}</Text>
+              <Text style={s.servingCustomer}>{serving.customer_name}</Text>
+              <Text style={s.servingService}>{serving.service_name}</Text>
+              {!!serving.notes && (
+                <View style={s.notesRow}>
+                  <MaterialIcons name="notes" size={13} color="#93c5fd" />
+                  <Text style={s.notesText}>{serving.notes}</Text>
+                </View>
+              )}
+              <View style={s.servingActions}>
                 <TouchableOpacity
-                  key={biz.key}
-                  style={styles.bizCard}
-                  onPress={() => handleSelectBusiness(biz.key)}
+                  style={[s.completeBtn, completing && { opacity: 0.6 }]}
+                  onPress={handleComplete}
+                  activeOpacity={0.85}
+                  disabled={completing}
+                >
+                  {completing
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <MaterialIcons name="check-circle" size={16} color="#fff" />
+                  }
+                  <Text style={s.completeBtnTxt}>{completing ? 'Saving…' : 'Complete'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={s.cancelServingBtn} onPress={() => handleCancel(serving)} activeOpacity={0.85}>
+                  <MaterialIcons name="close" size={16} color="#fca5a5" />
+                  <Text style={s.cancelServingTxt}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          ) : (
+            <View style={s.servingEmptyWrap}>
+              <MaterialIcons name="person-outline" size={44} color="rgba(255,255,255,0.25)" />
+              <Text style={s.servingEmptyTxt}>No customer being served</Text>
+              <Text style={s.servingEmptySub}>
+                {!active ? 'You are on break' : waiting.length === 0 ? 'Queue is empty' : 'Call the next customer below'}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* ── Waiting queue ────────────────────────────────── */}
+        <View style={s.sectionRow}>
+          <Text style={s.sectionTitle}>Waiting Queue</Text>
+          <View style={[s.countBadge, waiting.length > 0 ? s.countBadgeActive : s.countBadgeEmpty]}>
+            <Text style={[s.countBadgeTxt, waiting.length > 0 && { color: '#1d4ed8' }]}>
+              {waiting.length} waiting
+            </Text>
+          </View>
+        </View>
+
+        {loading && waiting.length === 0 ? (
+          <View style={s.emptyQueue}>
+            <ActivityIndicator color="#2563eb" />
+          </View>
+        ) : waiting.length === 0 ? (
+          <View style={s.emptyQueue}>
+            <MaterialIcons name="check-circle-outline" size={44} color="#a7f3d0" />
+            <Text style={s.emptyQueueTxt}>Queue is clear</Text>
+            <Text style={s.emptyQueueSub}>No customers waiting right now</Text>
+          </View>
+        ) : (
+          waiting.map((ticket, idx) => (
+            <View key={ticket.id} style={s.queueItem}>
+              {/* Position + ticket */}
+              <View style={s.queueItemLeft}>
+                <View style={s.posWrap}>
+                  <Text style={s.posNum}>{String(idx + 1).padStart(2, '0')}</Text>
+                </View>
+                <View style={{ flex: 1, gap: 3 }}>
+                  <Text style={s.ticketNum}>{ticket.ticket_number}</Text>
+                  <Text style={s.customerName}>{ticket.customer_name}</Text>
+                  <View style={s.metaRow}>
+                    <MaterialIcons name="room-service" size={11} color="#94a3b8" />
+                    <Text style={s.metaTxt}>{ticket.service_name}</Text>
+                    <Text style={s.metaSep}>·</Text>
+                    <MaterialIcons name="schedule" size={11} color="#94a3b8" />
+                    <Text style={[s.metaTxt, { color: '#d97706' }]}>
+                      {ticket.estimated_wait > 0 ? `~${ticket.estimated_wait}m` : '<5m'}
+                    </Text>
+                  </View>
+                  {!!ticket.notes && (
+                    <Text style={s.notesBadge} numberOfLines={1}>{ticket.notes}</Text>
+                  )}
+                </View>
+              </View>
+
+              {/* Actions */}
+              <View style={s.queueActions}>
+                <TouchableOpacity
+                  style={[s.callBtn, (!active || !!serving || calling !== null) && s.callBtnDisabled]}
+                  onPress={() => handleCall(ticket)}
+                  disabled={!active || !!serving || calling !== null}
                   activeOpacity={0.8}
                 >
-                  <View style={[styles.bizIconWrap, { backgroundColor: biz.bg }]}>
-                    <MaterialIcons name={biz.icon} size={22} color={biz.iconColor} />
-                  </View>
-                  <Text style={styles.bizLabel}>{biz.label}</Text>
-                  <Text style={styles.bizDesc}>{biz.desc}</Text>
+                  {calling === ticket.id
+                    ? <ActivityIndicator size="small" color="#94a3b8" style={{ width: 14, height: 14 }} />
+                    : <MaterialIcons name="play-arrow" size={14} color={!active || !!serving || calling !== null ? '#94a3b8' : '#2563eb'} />
+                  }
+                  <Text style={[s.callBtnTxt, (!active || !!serving || calling !== null) && { color: '#94a3b8' }]}>Call</Text>
                 </TouchableOpacity>
-              ))}
-              {row.length === 1 && <View style={styles.cardPlaceholder} />}
+                <TouchableOpacity
+                  style={s.cancelItemBtn}
+                  onPress={() => handleCancel(ticket)}
+                  activeOpacity={0.8}
+                >
+                  <MaterialIcons name="close" size={14} color="#e11d48" />
+                </TouchableOpacity>
+              </View>
             </View>
-          ))}
+          ))
+        )}
+
+        {/* ── Footer note ─────────────────────────────────── */}
+        <View style={s.footerNote}>
+          <MaterialIcons name="sync" size={12} color="#94a3b8" />
+          <Text style={s.footerNoteTxt}>Auto-refreshes every 10 seconds · Pull down to refresh manually</Text>
         </View>
       </ScrollView>
+
       <BottomNav />
     </SafeAreaView>
   );
 }
 
-function WaitingItem({ item, canCall, onCall, onSkip, onCancel }: {
-  item: QueueItem; canCall: boolean;
-  onCall: () => void; onSkip: () => void; onCancel: () => void;
-}) {
-  const tc = TYPE_COLOR[item.typeColor] || TYPE_COLOR.slate;
-  return (
-    <View style={styles.waitingItem}>
-      <View style={styles.waitingTop}>
-        <View style={styles.waitingPosWrap}>
-          <Text style={styles.waitingPosNum}>{String(item.pos).padStart(3, '0')}</Text>
-          <Text style={styles.waitingPosLabel}>{item.ticket}</Text>
-        </View>
-        <View style={[styles.typeTag, { backgroundColor: tc.bg }]}>
-          <Text style={[styles.typeTagText, { color: tc.text }]}>{item.type}</Text>
-        </View>
-      </View>
-      <View style={styles.waitingDetails}>
-        <View style={styles.waitingRow}>
-          <Text style={styles.waitingDetailLabel}>Service</Text>
-          <Text style={styles.waitingDetailValue}>{item.service}</Text>
-        </View>
-        <View style={styles.waitingRow}>
-          <Text style={styles.waitingDetailLabel}>Customer</Text>
-          <Text style={styles.waitingDetailValue}>{item.customer}</Text>
-        </View>
-        <View style={styles.waitingRow}>
-          <Text style={styles.waitingDetailLabel}>Wait</Text>
-          <Text style={[styles.waitingDetailValue, { color: '#d97706' }]}>{item.wait}</Text>
-        </View>
-      </View>
-      {item.tags.length > 0 && (
-        <View style={styles.tagsRow}>
-          {item.tags.map(tag => (
-            <View key={tag} style={styles.tagPill}>
-              <Text style={styles.tagPillText}>{tag}</Text>
-            </View>
-          ))}
-        </View>
-      )}
-      <View style={styles.waitingActions}>
-        <TouchableOpacity style={[styles.wCallBtn, !canCall && styles.wCallBtnDisabled]} onPress={onCall} disabled={!canCall} activeOpacity={0.8}>
-          <Text style={[styles.wCallBtnText, !canCall && { color: '#94a3b8' }]}>Call Next</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.wSkipBtn, !canCall && styles.wSkipBtnDisabled]} onPress={onSkip} disabled={!canCall} activeOpacity={0.8}>
-          <Text style={styles.wSkipBtnText}>Skip</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.wCancelBtn, !canCall && styles.wCancelBtnDisabled]} onPress={onCancel} disabled={!canCall} activeOpacity={0.8}>
-          <Text style={styles.wCancelBtnText}>Cancel</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
+  content: { padding: 16, gap: 14, paddingBottom: 32 },
 
-  // Grid view
-  gridContent: { padding: 20, gap: 16, paddingBottom: 24 },
-  gridPageHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingTop: 8 },
-  gridTitle: { fontSize: 24, fontWeight: '900', color: '#0f172a', letterSpacing: -0.4 },
-  gridSubtitle: { fontSize: 13, color: '#64748b', fontWeight: '500', marginTop: 2 },
-  liveBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#ecfdf5', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: '#a7f3d0' },
-  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#10b981' },
-  liveBadgeText: { fontSize: 11, fontWeight: '800', color: '#065f46' },
-  chooseSectionHeader: { gap: 4 },
-  chooseSectionTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
-  chooseSectionSub: { fontSize: 13, color: '#64748b', fontWeight: '500' },
-  gridWrapper: { gap: 12 },
-  gridRow: { flexDirection: 'row', gap: 12 },
-  bizCard: {
-    flex: 1, backgroundColor: '#fff', borderRadius: 24, borderWidth: 1,
-    borderColor: '#e2e8f0', padding: 16, gap: 8,
+  loadingBox: { height: 80, alignItems: 'center', justifyContent: 'center' },
+
+  // Identity card
+  identityCard: {
+    backgroundColor: '#fff', borderRadius: 20, padding: 16,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    borderWidth: 1, borderColor: '#e2e8f0',
     shadowColor: '#0f172a', shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
   },
-  cardPlaceholder: { flex: 1 },
-  bizIconWrap: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
-  bizLabel: { fontSize: 13, fontWeight: '800', color: '#0f172a' },
-  bizDesc: { fontSize: 11, color: '#64748b', fontWeight: '500', lineHeight: 16 },
-
-  // Queue view
-  queueContent: { padding: 20, gap: 16, paddingBottom: 24 },
-  backRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 4 },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' },
-  queueTitle: { fontSize: 20, fontWeight: '900', color: '#0f172a', letterSpacing: -0.3 },
-  queueSubtitle: { fontSize: 11, fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 },
-
-  // Profile card
-  profileCard: { backgroundColor: '#fff', borderRadius: 24, borderWidth: 1, borderColor: '#e2e8f0', padding: 20, gap: 14, shadowColor: '#0f172a', shadowOpacity: 0.04, shadowRadius: 8, elevation: 2 },
-  profileTop: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  avatar: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center' },
+  avatarWrap: {
+    width: 52, height: 52, borderRadius: 26,
+    backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center',
+  },
   avatarText: { fontSize: 18, fontWeight: '900', color: '#1d4ed8' },
-  profileName: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
-  profileRole: { fontSize: 12, fontWeight: '700', color: '#2563eb', marginTop: 2 },
-  profileGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  profileGridItem: { gap: 2 },
-  profileGridLabel: { fontSize: 9, fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 },
-  profileGridValue: { fontSize: 12, fontWeight: '600', color: '#334155' },
-  servicesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  serviceChip: { backgroundColor: '#f1f5f9', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderColor: '#e2e8f0' },
-  serviceChipText: { fontSize: 10, fontWeight: '700', color: '#475569' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  staffName: { fontSize: 15, fontWeight: '800', color: '#0f172a', flex: 1 },
+  roleBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  roleBadgeText: { fontSize: 10, fontWeight: '800' },
+  shiftText: { fontSize: 12, color: '#64748b', fontWeight: '500' },
+  statusToggle: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 10, paddingVertical: 7, borderRadius: 12,
+    borderWidth: 1,
+  },
+  statusActive: { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0' },
+  statusBreak:  { backgroundColor: '#fffbeb', borderColor: '#fde68a' },
+  statusDot: { width: 7, height: 7, borderRadius: 4 },
+  statusToggleTxt: { fontSize: 11, fontWeight: '700' },
 
   // Stats
   statsRow: { flexDirection: 'row', gap: 8 },
-  statCard: { flex: 1, backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0', padding: 12, alignItems: 'center', gap: 4 },
-  statCardHighlight: { backgroundColor: '#eff6ff', borderColor: '#bfdbfe' },
-  statValue: { fontSize: 20, fontWeight: '900', color: '#0f172a' },
-  statValueHighlight: { color: '#1d4ed8' },
-  statLabel: { fontSize: 9, fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', textAlign: 'center', letterSpacing: 0.3 },
-  statLabelHighlight: { color: '#3b82f6' },
+  statCard: {
+    flex: 1, backgroundColor: '#fff', borderRadius: 14, padding: 10,
+    alignItems: 'center', gap: 5, borderWidth: 1.5,
+  },
+  statIconWrap: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  statValue: { fontSize: 18, fontWeight: '900', color: '#0f172a' },
+  statLabel: { fontSize: 9, fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4, textAlign: 'center' },
 
   // Currently serving card
-  servingCard: { backgroundColor: '#2563eb', borderRadius: 24, padding: 24, alignItems: 'center', gap: 8, shadowColor: '#2563eb', shadowOpacity: 0.3, shadowRadius: 12, elevation: 6 },
-  servingHeading: { fontSize: 10, fontWeight: '800', color: '#bfdbfe', textTransform: 'uppercase', letterSpacing: 1.5 },
-  servingTicket: { fontSize: 28, fontWeight: '900', color: '#fff', letterSpacing: -1 },
-  servingCustomer: { fontSize: 14, fontWeight: '700', color: '#e2e8f0' },
-  servingService: { fontSize: 12, color: '#93c5fd', fontWeight: '500', marginBottom: 8 },
-  servingEmpty: { fontSize: 18, fontWeight: '800', color: '#fff', textAlign: 'center' },
-  servingEmptySub: { fontSize: 12, color: '#93c5fd', textAlign: 'center', marginBottom: 8 },
-  completeBtn: { width: '100%', backgroundColor: '#10b981', borderRadius: 14, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  completeBtnText: { fontSize: 14, fontWeight: '800', color: '#fff' },
-  actionRow: { flexDirection: 'row', gap: 8, width: '100%' },
-  skipBtn: { flex: 1, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 14, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
-  skipBtnText: { fontSize: 13, fontWeight: '700', color: '#fff' },
-  cancelBtn: { flex: 1, backgroundColor: '#ef4444', borderRadius: 14, paddingVertical: 12, alignItems: 'center' },
-  cancelBtnText: { fontSize: 13, fontWeight: '700', color: '#fff' },
-  callNextBtn: { backgroundColor: '#fff', borderRadius: 14, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%' },
-  callNextBtnDisabled: { backgroundColor: 'rgba(255,255,255,0.2)' },
-  callNextBtnText: { fontSize: 14, fontWeight: '800', color: '#2563eb' },
-  callNextBtnTextDisabled: { color: '#94a3b8' },
+  servingCard: {
+    backgroundColor: '#1e40af', borderRadius: 24, padding: 22,
+    gap: 6, alignItems: 'center',
+    shadowColor: '#1d4ed8', shadowOpacity: 0.35, shadowRadius: 16, elevation: 8,
+  },
+  servingCardInactive: { backgroundColor: '#64748b', shadowColor: '#475569' },
+  servingCardHeader: { width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  servingDotRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#34d399' },
+  liveDotOff: { backgroundColor: '#94a3b8' },
+  servingCardTitle: { fontSize: 10, fontWeight: '800', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: 1.2 },
+  servingTimer: { fontSize: 11, fontWeight: '700', color: '#93c5fd', backgroundColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
 
-  // Counter card
-  counterCard: { backgroundColor: '#fff', borderRadius: 20, borderWidth: 1, borderColor: '#e2e8f0', padding: 16, gap: 12 },
-  counterTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
-  counterTitle: { fontSize: 14, fontWeight: '800', color: '#0f172a' },
-  counterToggleRow: { flexDirection: 'row', gap: 8 },
-  toggleBtn: { flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center', backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0' },
-  toggleActive: { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0' },
-  toggleInactive: { backgroundColor: '#fff1f2', borderColor: '#fecdd3' },
-  toggleText: { fontSize: 13, fontWeight: '700', color: '#64748b' },
-  toggleTextActive: { color: '#059669' },
-  toggleTextInactive: { color: '#e11d48' },
+  servingTicketNum: { fontSize: 52, fontWeight: '900', color: '#fff', letterSpacing: 1, marginTop: 4 },
+  servingCustomer: { fontSize: 16, fontWeight: '700', color: '#e2e8f0' },
+  servingService:  { fontSize: 13, color: '#93c5fd', fontWeight: '500' },
+  notesRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
+  notesText: { fontSize: 11, color: '#bfdbfe', fontWeight: '500' },
 
-  // Queue section
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  servingActions: { flexDirection: 'row', gap: 10, marginTop: 12, width: '100%' },
+  completeBtn: {
+    flex: 3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: '#10b981', borderRadius: 14, paddingVertical: 14,
+  },
+  completeBtnTxt: { fontSize: 14, fontWeight: '800', color: '#fff' },
+  cancelServingBtn: {
+    flex: 1.2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
+    backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: 14, paddingVertical: 14,
+    borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)',
+  },
+  cancelServingTxt: { fontSize: 13, fontWeight: '700', color: '#fca5a5' },
+
+  servingEmptyWrap: { alignItems: 'center', gap: 6, paddingVertical: 12 },
+  servingEmptyTxt: { fontSize: 16, fontWeight: '800', color: 'rgba(255,255,255,0.7)', textAlign: 'center' },
+  servingEmptySub: { fontSize: 12, color: 'rgba(255,255,255,0.4)', textAlign: 'center' },
+
+  // Section header
+  sectionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
   sectionTitle: { fontSize: 15, fontWeight: '800', color: '#0f172a' },
-  badge: { backgroundColor: '#f1f5f9', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
-  badgeText: { fontSize: 10, fontWeight: '700', color: '#64748b' },
-  emptyQueue: { backgroundColor: '#fff', borderRadius: 20, borderWidth: 1, borderColor: '#e2e8f0', padding: 32, alignItems: 'center', gap: 10 },
-  emptyQueueText: { fontSize: 14, color: '#64748b', fontWeight: '600' },
+  countBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  countBadgeActive: { backgroundColor: '#eff6ff' },
+  countBadgeEmpty:  { backgroundColor: '#f1f5f9' },
+  countBadgeTxt: { fontSize: 10, fontWeight: '700', color: '#94a3b8' },
 
-  // Waiting item
-  waitingItem: { backgroundColor: '#fff', borderRadius: 20, borderWidth: 1, borderColor: '#e2e8f0', padding: 16, gap: 12 },
-  waitingTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  waitingPosWrap: { gap: 2 },
-  waitingPosNum: { fontSize: 16, fontWeight: '900', color: '#0f172a' },
-  waitingPosLabel: { fontSize: 11, fontWeight: '600', color: '#64748b' },
-  typeTag: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
-  typeTagText: { fontSize: 10, fontWeight: '700' },
-  waitingDetails: { backgroundColor: '#f8fafc', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', padding: 12, gap: 8 },
-  waitingRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  waitingDetailLabel: { fontSize: 9, fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 },
-  waitingDetailValue: { fontSize: 12, fontWeight: '600', color: '#334155' },
-  tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  tagPill: { backgroundColor: '#eff6ff', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
-  tagPillText: { fontSize: 9, fontWeight: '700', color: '#2563eb' },
-  waitingActions: { flexDirection: 'row', gap: 8 },
-  wCallBtn: { flex: 2, backgroundColor: '#eff6ff', borderRadius: 12, paddingVertical: 10, alignItems: 'center' },
-  wCallBtnDisabled: { backgroundColor: '#f1f5f9' },
-  wCallBtnText: { fontSize: 13, fontWeight: '800', color: '#2563eb' },
-  wSkipBtn: { flex: 1, backgroundColor: '#fffbeb', borderRadius: 12, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: '#fde68a' },
-  wSkipBtnDisabled: { opacity: 0.5 },
-  wSkipBtnText: { fontSize: 12, fontWeight: '700', color: '#d97706' },
-  wCancelBtn: { flex: 1, backgroundColor: '#fff1f2', borderRadius: 12, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: '#fecdd3' },
-  wCancelBtnDisabled: { opacity: 0.5 },
-  wCancelBtnText: { fontSize: 12, fontWeight: '700', color: '#e11d48' },
+  // Empty queue
+  emptyQueue: {
+    backgroundColor: '#fff', borderRadius: 20, borderWidth: 1, borderColor: '#e2e8f0',
+    padding: 32, alignItems: 'center', gap: 8,
+  },
+  emptyQueueTxt: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
+  emptyQueueSub: { fontSize: 13, color: '#94a3b8', fontWeight: '500' },
+
+  // Queue item
+  queueItem: {
+    backgroundColor: '#fff', borderRadius: 18, borderWidth: 1, borderColor: '#e2e8f0',
+    padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12,
+    shadowColor: '#0f172a', shadowOpacity: 0.03, shadowRadius: 6, elevation: 1,
+  },
+  queueItemLeft: { flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  posWrap: {
+    width: 36, height: 36, borderRadius: 10,
+    backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: '#e2e8f0',
+  },
+  posNum: { fontSize: 13, fontWeight: '900', color: '#475569' },
+  ticketNum: { fontSize: 14, fontWeight: '900', color: '#0f172a' },
+  customerName: { fontSize: 13, fontWeight: '600', color: '#334155' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
+  metaTxt: { fontSize: 11, color: '#94a3b8', fontWeight: '500' },
+  metaSep: { fontSize: 11, color: '#cbd5e1' },
+  notesBadge: { fontSize: 10, color: '#7c3aed', fontWeight: '600', backgroundColor: '#f5f3ff', alignSelf: 'flex-start', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 },
+
+  queueActions: { flexDirection: 'column', gap: 6, alignItems: 'center' },
+  callBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#eff6ff', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
+    borderWidth: 1, borderColor: '#bfdbfe',
+  },
+  callBtnDisabled: { backgroundColor: '#f1f5f9', borderColor: '#e2e8f0' },
+  callBtnTxt: { fontSize: 12, fontWeight: '800', color: '#2563eb' },
+  cancelItemBtn: {
+    width: 34, height: 34, borderRadius: 10,
+    backgroundColor: '#fff1f2', alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: '#fecdd3',
+  },
+
+  // Footer
+  footerNote: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, marginTop: 6 },
+  footerNoteTxt: { fontSize: 10, color: '#cbd5e1', fontWeight: '500', textAlign: 'center' },
 });

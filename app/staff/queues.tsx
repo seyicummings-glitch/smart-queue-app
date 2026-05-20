@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,78 +6,147 @@ import {
   ScrollView,
   TouchableOpacity,
   StatusBar,
+  ActivityIndicator,
+  RefreshControl,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAppContext } from '@/context/AppContext';
 import BottomNav from '@/components/BottomNav';
+import { api } from '@/lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Customer = {
-  id: string;
-  name: string;
-  waitTime: string;
-  service?: string;
+type AssignedService = { id: number; name: string };
+
+type Ticket = {
+  id: number;
+  ticket_number: string;
+  customer_name: string;
+  service_name: string;
+  status: 'waiting' | 'serving' | 'completed' | 'cancelled';
+  position: number;
+  estimated_wait: number;
+  issued_at: string;
 };
 
-type CurrentServing = {
-  ticketId: string;
-  name: string;
-  service: string;
-  waitTime: string;
-  type: string;
-};
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function toArr<T>(d: any): T[] {
+  return Array.isArray(d) ? d : (d?.results ?? []);
+}
+
+function fmt12h(iso: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${h > 12 ? h - 12 : h === 0 ? 12 : h}:${m} ${h >= 12 ? 'PM' : 'AM'}`;
+}
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function StaffQueues() {
   const router = useRouter();
-  const { staffQueues, role } = useAppContext();
+  const { role } = useAppContext();
 
-  const [selectedQueueId, setSelectedQueueId] = useState<number>(
-    staffQueues.length > 0 ? staffQueues[0].id : 1,
-  );
-  const [currentServing, setCurrentServing] = useState<CurrentServing | null>(null);
+  const [loading,       setLoading]       = useState(true);
+  const [refresh,       setRefresh]       = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [counterNumber, setCounterNumber] = useState<number | null>(null);
+  const [services,      setServices]      = useState<AssignedService[]>([]);
+  const [selectedId,    setSelectedId]    = useState<number | null>(null);
+  const [waitingMap,    setWaitingMap]    = useState<Record<number, Ticket[]>>({});
+  const [servingMap,    setServingMap]    = useState<Record<number, Ticket | null>>({});
 
-  // Local waiting list keyed by queue id — populated from mock data
-  const [waitingMap, setWaitingMap] = useState<Record<number, Customer[]>>(() => {
-    const initial: Record<number, Customer[]> = {};
-    staffQueues.forEach((q) => {
-      initial[q.id] = Array.from({ length: q.count }, (_, i) => ({
-        id: `TKT-${String(q.id * 100 + i + 1).padStart(4, '0')}`,
-        name: ['Alex Turner', 'Maria Santos', 'John Doe', 'Priya Patel', 'Lucas Oliveira'][
-          (q.id + i) % 5
-        ],
-        waitTime: `${(i + 1) * 5} mins`,
-        service: q.name,
-      }));
-    });
-    return initial;
-  });
+  const initializedRef = useRef(false);
 
-  const waitingList = waitingMap[selectedQueueId] || [];
+  const fetchData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
 
-  const handleCallNext = () => {
-    if (waitingList.length === 0) return;
-    const next = waitingList[0];
-    setCurrentServing({
-      ticketId: next.id,
-      name: next.name,
-      service: next.service || 'General Service',
-      waitTime: next.waitTime,
-      type: 'Walk-In',
-    });
-    setWaitingMap((prev) => ({
-      ...prev,
-      [selectedQueueId]: prev[selectedQueueId].slice(1),
-    }));
+    const { data: ci } = await api.get<{ counter_number: number | null; assigned_services: AssignedService[] }>(
+      '/accounts/my-counter/',
+    );
+
+    if (ci) {
+      setCounterNumber(ci.counter_number);
+      setServices(ci.assigned_services);
+
+      if (!initializedRef.current && ci.assigned_services.length > 0) {
+        setSelectedId(ci.assigned_services[0].id);
+        initializedRef.current = true;
+      }
+
+      const newWaiting: Record<number, Ticket[]>      = {};
+      const newServing: Record<number, Ticket | null> = {};
+
+      await Promise.all(
+        ci.assigned_services.map(async (svc) => {
+          const [w, s] = await Promise.all([
+            api.get<any>(`/queues/?service=${svc.id}&status=waiting`),
+            api.get<any>(`/queues/?service=${svc.id}&status=serving`),
+          ]);
+          newWaiting[svc.id] = toArr<Ticket>(w.data);
+          const servingList  = toArr<Ticket>(s.data);
+          newServing[svc.id] = servingList.length > 0 ? servingList[0] : null;
+        }),
+      );
+
+      setWaitingMap(newWaiting);
+      setServingMap(newServing);
+    }
+
+    setLoading(false);
+    setRefresh(false);
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+    const t = setInterval(() => fetchData(true), 8_000);
+    return () => clearInterval(t);
+  }, [fetchData]);
+
+  const handleCallNext = async () => {
+    if (!selectedId) return;
+    const waiting = waitingMap[selectedId] ?? [];
+    if (waiting.length === 0) return;
+    setActionLoading(true);
+    const { error } = await api.post(`/queues/${waiting[0].id}/call/`, {});
+    setActionLoading(false);
+    if (error) { Alert.alert('Error', error); return; }
+    fetchData(true);
   };
 
-  const handleComplete = () => {
-    setCurrentServing(null);
+  const handleComplete = async () => {
+    if (!selectedId) return;
+    const serving = servingMap[selectedId];
+    if (!serving) return;
+    setActionLoading(true);
+    const { error } = await api.post(`/queues/${serving.id}/complete/`, {});
+    setActionLoading(false);
+    if (error) { Alert.alert('Error', error); return; }
+    fetchData(true);
   };
+
+  const selectedWaiting = selectedId ? (waitingMap[selectedId] ?? []) : [];
+  const selectedServing  = selectedId ? (servingMap[selectedId]  ?? null) : null;
+
+  const dashboardRoute = (role === 'admin' || role === 'super_admin' || role === 'superadmin')
+    ? '/admin/dashboard'
+    : '/staff/dashboard';
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <View style={styles.loadingCenter}>
+          <ActivityIndicator size="large" color="#2563eb" />
+        </View>
+        <BottomNav />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -88,49 +157,59 @@ export default function StaffQueues() {
         <View style={styles.headerTopRow}>
           <TouchableOpacity
             style={styles.backBtn}
-            onPress={() => {
-              const home = role === 'admin' || role === 'super_admin' || role === 'superadmin'
-                ? '/admin/dashboard'
-                : '/staff/dashboard';
-              router.canGoBack() ? router.back() : router.replace(home as any);
-            }}
+            onPress={() => router.canGoBack() ? router.back() : router.replace(dashboardRoute as any)}
           >
             <MaterialIcons name="arrow-back" size={22} color="#0f172a" />
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
-            <Text style={styles.headerTitle}>My Queues</Text>
-            <Text style={styles.headerSub}>Manage your assigned service queues</Text>
+            <Text style={styles.headerTitle}>My Counter</Text>
+            <Text style={styles.headerSub}>
+              {counterNumber ? `Counter #${counterNumber}` : 'Assigned service queues'}
+            </Text>
           </View>
+          {counterNumber !== null && (
+            <View style={styles.counterBadge}>
+              <MaterialIcons name="tag" size={14} color="#2563eb" />
+              <Text style={styles.counterBadgeText}>{counterNumber}</Text>
+            </View>
+          )}
         </View>
       </View>
 
-      {/* Queue selector pills */}
-      {staffQueues.length > 0 ? (
+      {/* No assignments */}
+      {services.length === 0 ? (
+        <View style={styles.noQueues}>
+          <MaterialIcons name="group" size={48} color="#cbd5e1" />
+          <Text style={styles.noQueuesTitle}>No queues assigned</Text>
+          <Text style={styles.noQueuesText}>
+            Contact your administrator to be assigned to a service queue.
+          </Text>
+        </View>
+      ) : (
         <>
+          {/* Service tabs */}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.pillsContent}
             style={styles.pillsScroll}
           >
-            {staffQueues.map((q) => {
-              const active = q.id === selectedQueueId;
+            {services.map((svc) => {
+              const active = svc.id === selectedId;
+              const count  = (waitingMap[svc.id] ?? []).length;
               return (
                 <TouchableOpacity
-                  key={q.id}
+                  key={svc.id}
                   style={[styles.pill, active && styles.pillActive]}
-                  onPress={() => {
-                    setSelectedQueueId(q.id);
-                    setCurrentServing(null);
-                  }}
+                  onPress={() => setSelectedId(svc.id)}
                   activeOpacity={0.8}
                 >
                   <Text style={[styles.pillText, active && styles.pillTextActive]}>
-                    {q.name}
+                    {svc.name}
                   </Text>
                   <View style={[styles.pillBadge, active && styles.pillBadgeActive]}>
                     <Text style={[styles.pillBadgeText, active && styles.pillBadgeTextActive]}>
-                      {(waitingMap[q.id] || []).length}
+                      {count}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -138,39 +217,55 @@ export default function StaffQueues() {
             })}
           </ScrollView>
 
-          <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <ScrollView
+            contentContainerStyle={styles.content}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refresh}
+                onRefresh={() => { setRefresh(true); fetchData(true); }}
+                tintColor="#2563eb"
+              />
+            }
+          >
             {/* Currently Serving */}
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Currently Serving</Text>
             </View>
 
-            {currentServing ? (
+            {selectedServing ? (
               <View style={styles.servingCard}>
                 <View style={styles.servingDark}>
                   <View style={styles.servingTopRow}>
                     <View>
                       <Text style={styles.nowServingLabel}>Now Serving</Text>
-                      <Text style={styles.servingTicket}>{currentServing.ticketId}</Text>
+                      <Text style={styles.servingTicket}>{selectedServing.ticket_number}</Text>
                     </View>
                     <View style={styles.typeBadge}>
-                      <Text style={styles.typeBadgeText}>{currentServing.type}</Text>
+                      <Text style={styles.typeBadgeText}>Walk-In</Text>
                     </View>
                   </View>
-                  <Text style={styles.servingName}>{currentServing.name}</Text>
-                  <Text style={styles.servingService}>{currentServing.service}</Text>
+                  <Text style={styles.servingName}>{selectedServing.customer_name}</Text>
+                  <Text style={styles.servingService}>{selectedServing.service_name}</Text>
                   <View style={styles.waitRow}>
                     <MaterialIcons name="access-time" size={13} color="#94a3b8" />
-                    <Text style={styles.waitText}>Waited {currentServing.waitTime}</Text>
+                    <Text style={styles.waitText}>Since {fmt12h(selectedServing.issued_at)}</Text>
                   </View>
                 </View>
 
                 <TouchableOpacity
-                  style={styles.completeBtn}
+                  style={[styles.completeBtn, actionLoading && { opacity: 0.6 }]}
                   onPress={handleComplete}
+                  disabled={actionLoading}
                   activeOpacity={0.8}
                 >
-                  <MaterialIcons name="check-circle" size={18} color="#fff" />
-                  <Text style={styles.completeBtnText}>Mark as Complete</Text>
+                  {actionLoading
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <>
+                        <MaterialIcons name="check-circle" size={18} color="#fff" />
+                        <Text style={styles.completeBtnText}>Mark as Complete</Text>
+                      </>
+                  }
                 </TouchableOpacity>
               </View>
             ) : (
@@ -178,7 +273,7 @@ export default function StaffQueues() {
                 <MaterialIcons name="person" size={36} color="#cbd5e1" />
                 <Text style={styles.emptyServingText}>No customer being served</Text>
                 <Text style={styles.emptyServingHint}>
-                  {waitingList.length > 0
+                  {selectedWaiting.length > 0
                     ? 'Press "Call Next" below to start'
                     : 'The waiting queue is empty'}
                 </Text>
@@ -189,18 +284,18 @@ export default function StaffQueues() {
             <View style={[styles.sectionHeader, { marginTop: 8 }]}>
               <Text style={styles.sectionTitle}>Waiting Customers</Text>
               <View style={styles.countBadge}>
-                <Text style={styles.countBadgeText}>{waitingList.length}</Text>
+                <Text style={styles.countBadgeText}>{selectedWaiting.length}</Text>
               </View>
             </View>
 
-            {waitingList.length === 0 ? (
+            {selectedWaiting.length === 0 ? (
               <View style={styles.emptyList}>
                 <MaterialIcons name="check-circle" size={36} color="#10b981" />
                 <Text style={styles.emptyListText}>Queue is clear!</Text>
               </View>
             ) : (
-              waitingList.map((customer, index) => (
-                <CustomerRow key={customer.id} customer={customer} position={index + 1} />
+              selectedWaiting.map((ticket, index) => (
+                <TicketRow key={ticket.id} ticket={ticket} position={index + 1} />
               ))
             )}
 
@@ -208,41 +303,43 @@ export default function StaffQueues() {
             <TouchableOpacity
               style={[
                 styles.callNextBtn,
-                (waitingList.length === 0 || currentServing !== null) && styles.callNextBtnDisabled,
+                (selectedWaiting.length === 0 || selectedServing !== null || actionLoading) &&
+                  styles.callNextBtnDisabled,
               ]}
               onPress={handleCallNext}
-              disabled={waitingList.length === 0 || currentServing !== null}
+              disabled={selectedWaiting.length === 0 || selectedServing !== null || actionLoading}
               activeOpacity={0.8}
             >
-              <MaterialIcons
-                name="play-circle-outline"
-                size={20}
-                color={waitingList.length === 0 || currentServing !== null ? '#94a3b8' : '#fff'}
-              />
-              <Text
-                style={[
-                  styles.callNextBtnText,
-                  (waitingList.length === 0 || currentServing !== null) &&
-                    styles.callNextBtnTextDisabled,
-                ]}
-              >
-                {currentServing !== null
-                  ? 'Complete current first'
-                  : waitingList.length === 0
-                  ? 'Queue Empty'
-                  : 'Call Next Customer'}
-              </Text>
+              {actionLoading
+                ? <ActivityIndicator color="#94a3b8" size="small" />
+                : <>
+                    <MaterialIcons
+                      name="play-circle-outline"
+                      size={20}
+                      color={
+                        selectedWaiting.length === 0 || selectedServing !== null
+                          ? '#94a3b8'
+                          : '#fff'
+                      }
+                    />
+                    <Text
+                      style={[
+                        styles.callNextBtnText,
+                        (selectedWaiting.length === 0 || selectedServing !== null) &&
+                          styles.callNextBtnTextDisabled,
+                      ]}
+                    >
+                      {selectedServing !== null
+                        ? 'Complete current first'
+                        : selectedWaiting.length === 0
+                        ? 'Queue Empty'
+                        : 'Call Next Customer'}
+                    </Text>
+                  </>
+              }
             </TouchableOpacity>
           </ScrollView>
         </>
-      ) : (
-        <View style={styles.noQueues}>
-          <MaterialIcons name="group" size={48} color="#cbd5e1" />
-          <Text style={styles.noQueuesTitle}>No queues assigned</Text>
-          <Text style={styles.noQueuesText}>
-            Contact your administrator to be assigned to a service queue.
-          </Text>
-        </View>
       )}
 
       <BottomNav />
@@ -250,24 +347,22 @@ export default function StaffQueues() {
   );
 }
 
-// ─── Customer row ─────────────────────────────────────────────────────────────
+// ─── Ticket row ───────────────────────────────────────────────────────────────
 
-function CustomerRow({ customer, position }: { customer: Customer; position: number }) {
+function TicketRow({ ticket, position }: { ticket: Ticket; position: number }) {
   return (
     <View style={styles.customerRow}>
       <View style={styles.posCircle}>
         <Text style={styles.posText}>#{position}</Text>
       </View>
       <View style={styles.customerInfo}>
-        <Text style={styles.customerTicket}>{customer.id}</Text>
-        <Text style={styles.customerName}>{customer.name}</Text>
-        {customer.service && (
-          <Text style={styles.customerService}>{customer.service}</Text>
-        )}
+        <Text style={styles.customerTicket}>{ticket.ticket_number}</Text>
+        <Text style={styles.customerName}>{ticket.customer_name}</Text>
+        <Text style={styles.customerService}>{ticket.service_name}</Text>
       </View>
       <View style={styles.waitBadge}>
         <MaterialIcons name="access-time" size={12} color="#64748b" />
-        <Text style={styles.waitBadgeText}>{customer.waitTime}</Text>
+        <Text style={styles.waitBadgeText}>~{ticket.estimated_wait} min</Text>
       </View>
     </View>
   );
@@ -279,6 +374,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',
+  },
+  loadingCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   // Header
@@ -314,6 +414,22 @@ const styles = StyleSheet.create({
     color: '#64748b',
     marginTop: 4,
     fontWeight: '500',
+  },
+  counterBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#eff6ff',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  counterBadgeText: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#2563eb',
   },
 
   // Pills
@@ -503,7 +619,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // Customer row
+  // Ticket row
   customerRow: {
     backgroundColor: '#fff',
     borderRadius: 14,

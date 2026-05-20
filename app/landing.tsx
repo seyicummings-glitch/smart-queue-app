@@ -200,7 +200,7 @@ function RegisterModal({ visible, onClose, onSuccess }: { visible: boolean; onCl
                   placeholder="Phone number"
                   placeholderTextColor="#94a3b8"
                   value={form.phone}
-                  onChangeText={v => setForm(p => ({ ...p, phone: v.replace(/[^0-9]/g, '').slice(0, 15) }))}
+                  onChangeText={v => setForm(p => ({ ...p, phone: v.replace(/[^0-9]/g, '').slice(0, 10) }))}
                   keyboardType="phone-pad"
                 />
               </View>

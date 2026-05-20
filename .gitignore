@@ -41,3 +41,14 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Django secrets — never commit real credentials
+backend/.env
+
+# Cloudflare binary
+cloudflared.exe

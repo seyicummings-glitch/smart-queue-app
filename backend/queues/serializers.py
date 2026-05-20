@@ -7,6 +7,7 @@ class QueueTicketSerializer(serializers.ModelSerializer):
     service_name   = serializers.CharField(source='service.name', read_only=True)
     branch_name    = serializers.CharField(source='branch.name', read_only=True)
     estimated_wait = serializers.SerializerMethodField()
+    ahead_tickets  = serializers.SerializerMethodField()
 
     class Meta:
         model  = QueueTicket
@@ -14,7 +15,8 @@ class QueueTicketSerializer(serializers.ModelSerializer):
             'id', 'ticket_number', 'customer', 'customer_name',
             'service', 'service_name', 'branch', 'branch_name',
             'status', 'position', 'notes',
-            'estimated_wait', 'issued_at', 'called_at', 'completed_at',
+            'estimated_wait', 'ahead_tickets',
+            'issued_at', 'called_at', 'completed_at',
         )
         read_only_fields = ('id', 'ticket_number', 'position', 'issued_at', 'called_at', 'completed_at')
 
@@ -27,8 +29,19 @@ class QueueTicketSerializer(serializers.ModelSerializer):
             status='waiting',
             issued_at__lt=obj.issued_at,
         ).count()
-        avg = obj.service.estimated_time
-        return ahead * avg
+        return ahead * obj.service.estimated_time
+
+    def get_ahead_tickets(self, obj):
+        if obj.status not in ('waiting', 'serving'):
+            return []
+        return list(
+            QueueTicket.objects.filter(
+                branch=obj.branch,
+                service=obj.service,
+                status__in=['waiting', 'serving'],
+                issued_at__lt=obj.issued_at,
+            ).values_list('ticket_number', flat=True).order_by('issued_at')
+        )
 
 
 class QueueRuleSerializer(serializers.ModelSerializer):

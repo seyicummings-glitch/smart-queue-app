@@ -1,15 +1,48 @@
 /**
  * HTTP client for the Django REST backend.
  * Handles JWT storage, auto-refresh on 401, and error normalisation.
+ *
+ * Server URL is configurable at runtime via setServerUrl() — stored in
+ * AsyncStorage so it survives restarts without a code change or rebuild.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
 
-// Android emulator maps localhost → 10.0.2.2; every other platform uses localhost
-export const BASE_URL =
-  Platform.OS === 'android'
-    ? 'http://10.0.2.2:8000/api'
-    : 'http://localhost:8000/api';
+const REQUEST_TIMEOUT_MS = 15_000;
+const SERVER_URL_KEY = 'sqms_server_url';
+
+// In-memory cache of the user-configured URL (loaded once at startup)
+let _runtimeUrl: string | null = null;
+
+/** Call once at app startup (e.g. in AuthProvider) to restore the saved URL. */
+export async function initServerUrl(): Promise<void> {
+  // Runtime URL override via logo tap (5x) takes effect immediately in-session.
+  // We do NOT load from AsyncStorage so the hardcoded BASE_URL is always the default.
+}
+
+/** Persist a new server URL immediately — affects all subsequent requests. */
+export async function setServerUrl(url: string): Promise<void> {
+  const clean = url.trim().replace(/\/+$/, '');
+  _runtimeUrl = clean;
+  await AsyncStorage.setItem(SERVER_URL_KEY, clean);
+}
+
+/** Return the currently saved URL (raw, without /api suffix), or null. */
+export async function getStoredServerUrl(): Promise<string | null> {
+  return AsyncStorage.getItem(SERVER_URL_KEY);
+}
+
+function getDefaultBaseUrl(): string {
+  if (!__DEV__) return 'https://your-production-api.com/api';
+  return 'https://beginner-rehab-province-consequences.trycloudflare.com/api';
+}
+
+// Static fallback (used before initServerUrl() resolves, or if no URL is saved)
+export const BASE_URL = getDefaultBaseUrl();
+
+// The effective URL used for every request — runtime value wins over static fallback
+function effectiveBaseUrl(): string {
+  return _runtimeUrl ?? BASE_URL;
+}
 
 const TOKEN_KEYS = {
   ACCESS:  'sqms_access',
@@ -36,12 +69,23 @@ export async function clearTokens(): Promise<void> {
   await AsyncStorage.multiRemove([TOKEN_KEYS.ACCESS, TOKEN_KEYS.REFRESH]);
 }
 
+// ── Fetch with timeout ────────────────────────────────────────────────────────
+async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── Silent token refresh ──────────────────────────────────────────────────────
 async function refreshAccessToken(): Promise<string | null> {
   const refresh = await getRefreshToken();
   if (!refresh) return null;
   try {
-    const res = await fetch(`${BASE_URL}/token/refresh/`, {
+    const res = await fetchWithTimeout(`${effectiveBaseUrl()}/accounts/refresh/`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ refresh }),
@@ -64,7 +108,7 @@ export async function apiRequest<T = unknown>(
   body?: Record<string, unknown>,
   auth = true,
 ): Promise<ApiResult<T>> {
-  const url     = `${BASE_URL}${path}`;
+  const url     = `${effectiveBaseUrl()}${path}`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
   if (auth) {
@@ -74,7 +118,7 @@ export async function apiRequest<T = unknown>(
   }
 
   const makeRequest = () =>
-    fetch(url, {
+    fetchWithTimeout(url, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -97,7 +141,6 @@ export async function apiRequest<T = unknown>(
     const json = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      // DRF error shapes: { detail }, { field: [msg] }, { non_field_errors: [msg] }
       let msg = `Request failed (${res.status})`;
       if (typeof json === 'object' && json !== null) {
         const j = json as Record<string, unknown>;
@@ -120,8 +163,11 @@ export async function apiRequest<T = unknown>(
 
     return { data: json as T, error: null };
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : 'Network error — is the backend running?';
-    return { data: null, error: msg };
+    if (e instanceof Error && e.name === 'AbortError') {
+      return { data: null, error: `Connection timed out (${effectiveBaseUrl()}). Update the server URL in the login screen.` };
+    }
+    const msg = e instanceof Error ? e.message : 'Network error';
+    return { data: null, error: `${msg} — update the server URL in the login screen.` };
   }
 }
 

@@ -1,8 +1,10 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, usePathname } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppContext } from '@/context/AppContext';
+import { api } from '@/lib/api';
 
 type Tab = {
   key: string;
@@ -12,30 +14,49 @@ type Tab = {
 };
 
 const CUSTOMER_TABS: Tab[] = [
-  { key: 'home',     label: 'Home',     icon: 'home',            route: '/customer/home' },
-  { key: 'queue',    label: 'Queue',    icon: 'qr-code-scanner', route: '/customer/appointments' },
-  { key: 'alerts',   label: 'Alerts',   icon: 'notifications',   route: '/notifications' },
-  { key: 'settings', label: 'Settings', icon: 'settings',        route: '/profile' },
+  { key: 'dashboard',    label: 'Dashboard',    icon: 'dashboard',             route: '/customer/home'       },
+  { key: 'services',     label: 'Services',     icon: 'room-service',          route: '/customer/industries' },
+  { key: 'queue-status', label: 'Queue Status', icon: 'notifications-active',  route: '/customer/queue-status' },
+  { key: 'appointments', label: 'Appointments', icon: 'event',                 route: '/customer/appointments' },
+  { key: 'support',      label: 'Support',      icon: 'support-agent',         route: '/customer/support'    },
 ];
 
 const STAFF_TABS: Tab[] = [
-  { key: 'home',     label: 'Home',     icon: 'home',            route: '/staff/dashboard' },
-  { key: 'queue',    label: 'Queue',    icon: 'view-list',       route: '/staff/queues' },
-  { key: 'alerts',   label: 'Alerts',   icon: 'notifications',   route: '/notifications' },
-  { key: 'settings', label: 'Settings', icon: 'settings',        route: '/profile' },
+  { key: 'dashboard',    label: 'Dashboard',    icon: 'dashboard',       route: '/staff/dashboard'       },
+  { key: 'my-counter',   label: 'My Counter',   icon: 'person-pin',      route: '/staff/queues'          },
+  { key: 'appointments', label: 'Appointments', icon: 'event',           route: '/customer/appointments' },
+  { key: 'support',      label: 'Support',      icon: 'support-agent',   route: '/customer/support'      },
+  { key: 'chat',         label: 'Chat',         icon: 'chat',            route: '/staff/chat'            },
 ];
 
 const ADMIN_TABS: Tab[] = [
-  { key: 'home',     label: 'Home',     icon: 'home',            route: '/admin/dashboard' },
-  { key: 'queue',    label: 'Queue',    icon: 'view-list',       route: '/staff/queues' },
-  { key: 'alerts',   label: 'Alerts',   icon: 'notifications',   route: '/notifications' },
-  { key: 'settings', label: 'Settings', icon: 'settings',        route: '/profile' },
+  { key: 'dashboard',    label: 'Dashboard',    icon: 'dashboard',       route: '/admin/dashboard'       },
+  { key: 'appointments', label: 'Appointments', icon: 'event',           route: '/customer/appointments' },
+  { key: 'queue',        label: 'Queue',        icon: 'list-alt',        route: '/admin/queue-status'    },
+  { key: 'support',      label: 'Support',      icon: 'support-agent',   route: '/customer/support'      },
+  { key: 'chat',         label: 'Chat',         icon: 'chat',            route: '/admin/messages'        },
 ];
 
 export default function BottomNav() {
-  const router = useRouter();
+  const router   = useRouter();
   const pathname = usePathname();
   const { role } = useAppContext();
+  const insets   = useSafeAreaInsets();
+
+  const isStaff = role === 'staff' || role === 'admin' || role === 'super_admin' || role === 'superadmin';
+
+  const [unread, setUnread] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchCount = async () => {
+      const { data } = await api.get<{ count: number }>('/notifications/unread-count/');
+      if (!cancelled && data) setUnread(data.count);
+    };
+    fetchCount();
+    const interval = setInterval(fetchCount, 30_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
 
   const tabs =
     role === 'admin' || role === 'super_admin' || role === 'superadmin' ? ADMIN_TABS :
@@ -43,9 +64,11 @@ export default function BottomNav() {
     CUSTOMER_TABS;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
       {tabs.map(tab => {
-        const active = pathname === tab.route || pathname.startsWith(tab.route + '/');
+        const active  = pathname === tab.route || pathname.startsWith(tab.route + '/');
+        const showBadge = isStaff && tab.key === 'alerts' && unread > 0;
+
         return (
           <TouchableOpacity
             key={tab.key}
@@ -59,6 +82,11 @@ export default function BottomNav() {
                 size={20}
                 color={active ? '#2563eb' : '#94a3b8'}
               />
+              {showBadge && (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{unread > 9 ? '9+' : unread}</Text>
+                </View>
+              )}
             </View>
             <Text style={[styles.label, active && styles.labelActive]}>
               {tab.label}
@@ -78,7 +106,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingHorizontal: 8,
     paddingTop: 4,
-    paddingBottom: Platform.OS === 'ios' ? 20 : 8,
   },
   tab: {
     flex: 1,
@@ -96,6 +123,26 @@ const styles = StyleSheet.create({
   },
   iconBgActive: {
     backgroundColor: '#eff6ff',
+  },
+  badge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    minWidth: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#e11d48',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  badgeText: {
+    fontSize: 8,
+    fontWeight: '800',
+    color: '#fff',
+    lineHeight: 10,
   },
   label: {
     fontSize: 9,

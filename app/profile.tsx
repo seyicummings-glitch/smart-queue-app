@@ -274,7 +274,7 @@ export default function ProfileScreen() {
               <ProfileField label="First Name"    value={form.firstName} icon="person"    editable={isEditing} onChangeText={v => setForm(p => ({ ...p, firstName: v }))} />
               <ProfileField label="Last Name"     value={form.lastName}  icon="person"    editable={isEditing} onChangeText={v => setForm(p => ({ ...p, lastName: v }))} />
               <ProfileField label="Email Address" value={form.email}     icon="email"     editable={false}     onChangeText={() => {}} keyboardType="email-address" />
-              <ProfileField label="Phone Number"  value={form.phone}     icon="phone"     editable={isEditing} onChangeText={v => setForm(p => ({ ...p, phone: v }))} keyboardType="phone-pad" />
+              <ProfileField label="Phone Number"  value={form.phone}     icon="phone"     editable={isEditing} onChangeText={v => setForm(p => ({ ...p, phone: v.replace(/[^0-9]/g, '').slice(0, 10) }))} keyboardType="phone-pad" />
               <ProfileField label="Role"          value={roleLabel}      icon="admin-panel-settings" editable={false} onChangeText={() => {}} />
             </View>
           )}

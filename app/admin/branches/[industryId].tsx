@@ -7,11 +7,11 @@ import {
   TouchableOpacity,
   TextInput,
   Modal,
-  SafeAreaView,
   StatusBar,
   Platform,
   KeyboardAvoidingView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 
@@ -32,12 +32,39 @@ type FormData = {
   counters: string;
 };
 
-const INITIAL_BRANCHES: Branch[] = [
-  { id: 1, name: 'First National Bank - Downtown', address: '123 Financial District, Manhattan, NY 10005', phone: '+1 (212) 555-0100', hours: '9:00 AM - 6:00 PM', counters: 5 },
-  { id: 2, name: 'First National Bank - Midtown', address: '456 Park Avenue, New York, NY 10022', phone: '+1 (212) 555-0200', hours: '9:00 AM - 6:00 PM', counters: 3 },
-  { id: 3, name: 'First National Bank - Brooklyn', address: '789 Atlantic Avenue, Brooklyn, NY 11217', phone: '+1 (718) 555-0300', hours: '9:00 AM - 5:00 PM', counters: 5 },
-  { id: 4, name: 'First National Bank - Queens', address: '321 Main Street, Flushing, NY 11354', phone: '+1 (718) 555-0400', hours: '9:00 AM - 5:00 PM', counters: 3 },
-];
+// Branches keyed by admin industry slug — must match what customers see in the service page
+const BRANCHES_BY_INDUSTRY: Record<string, Branch[]> = {
+  'banking-finance': [
+    { id: 1, name: 'Manhattan Financial Center', address: '123 Wall St, New York',      phone: '+1 (212) 555-0101', hours: '9:00 AM - 6:00 PM', counters: 5 },
+    { id: 2, name: 'Brooklyn Service Hub',        address: '456 Atlantic Ave, Brooklyn', phone: '+1 (718) 555-0202', hours: '9:00 AM - 5:00 PM', counters: 3 },
+    { id: 3, name: 'Queens Branch',               address: '789 Queens Blvd, Queens',   phone: '+1 (718) 555-0303', hours: '9:00 AM - 5:00 PM', counters: 4 },
+  ],
+  'healthcare': [
+    { id: 1, name: 'Main Hospital — Downtown', address: '10 Medical Blvd, Downtown',  phone: '+1 (212) 555-1001', hours: '8:00 AM - 8:00 PM', counters: 6 },
+    { id: 2, name: 'Northside Clinic',         address: '22 Health Ave, Northside',   phone: '+1 (212) 555-1002', hours: '8:00 AM - 6:00 PM', counters: 3 },
+    { id: 3, name: 'Eastside Medical Center',  address: '88 Eastside Rd, East',       phone: '+1 (212) 555-1003', hours: '8:00 AM - 7:00 PM', counters: 5 },
+  ],
+  'retail': [
+    { id: 1, name: 'Flagship Store — Downtown', address: '1 Retail Plaza, Downtown',  phone: '+1 (212) 555-2001', hours: '10:00 AM - 9:00 PM', counters: 4 },
+    { id: 2, name: 'Mall Branch',               address: 'Level 2, Central Mall',     phone: '+1 (212) 555-2002', hours: '10:00 AM - 10:00 PM', counters: 3 },
+    { id: 3, name: 'Westside Outlet',           address: '55 West Rd, Westside',      phone: '+1 (212) 555-2003', hours: '9:00 AM - 7:00 PM', counters: 2 },
+  ],
+  'government': [
+    { id: 1, name: 'City Hall — Main Office',  address: '1 Civic Square, Downtown',  phone: '+1 (212) 555-3001', hours: '8:00 AM - 5:00 PM', counters: 8 },
+    { id: 2, name: 'North District Office',    address: '44 North Ave, Northgate',   phone: '+1 (212) 555-3002', hours: '8:00 AM - 4:30 PM', counters: 5 },
+    { id: 3, name: 'South Service Centre',     address: '77 South Rd, Southville',   phone: '+1 (212) 555-3003', hours: '8:00 AM - 4:30 PM', counters: 4 },
+  ],
+  'education': [
+    { id: 1, name: 'Main Campus — Admin Block', address: 'Building A, Main Campus', phone: '+1 (212) 555-4001', hours: '8:00 AM - 5:00 PM', counters: 4 },
+    { id: 2, name: 'East Campus',               address: 'East Wing, Campus B',     phone: '+1 (212) 555-4002', hours: '8:00 AM - 5:00 PM', counters: 2 },
+    { id: 3, name: 'City Learning Centre',      address: '12 City Rd, Downtown',    phone: '+1 (212) 555-4003', hours: '9:00 AM - 6:00 PM', counters: 3 },
+  ],
+  'corporate': [
+    { id: 1, name: 'HQ Tower A — Floor 12', address: '1 Corporate Blvd, CBD',        phone: '+1 (212) 555-5001', hours: '8:00 AM - 6:00 PM', counters: 3 },
+    { id: 2, name: 'West Office Park',      address: '33 Business Park, West',       phone: '+1 (212) 555-5002', hours: '8:00 AM - 5:30 PM', counters: 2 },
+    { id: 3, name: 'East Hub',              address: '88 East Business Park',        phone: '+1 (212) 555-5003', hours: '8:00 AM - 5:30 PM', counters: 2 },
+  ],
+};
 
 const EMPTY_FORM: FormData = { name: '', address: '', phone: '', hours: '', counters: '' };
 
@@ -45,7 +72,10 @@ export default function AdminBranches() {
   const router = useRouter();
   const { industryId } = useLocalSearchParams<{ industryId: string }>();
 
-  const [branches, setBranches] = useState<Branch[]>(INITIAL_BRANCHES);
+  const id = Array.isArray(industryId) ? industryId[0] : (industryId ?? '');
+  const defaultBranches = BRANCHES_BY_INDUSTRY[id] ?? BRANCHES_BY_INDUSTRY['banking-finance'];
+
+  const [branches, setBranches] = useState<Branch[]>(defaultBranches);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingBranchId, setEditingBranchId] = useState<number | null>(null);
   const [formData, setFormData] = useState<FormData>(EMPTY_FORM);
@@ -117,7 +147,7 @@ export default function AdminBranches() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
 
       {/* Header */}
@@ -257,7 +287,7 @@ export default function AdminBranches() {
                   <TextInput
                     style={styles.input}
                     value={formData.phone}
-                    onChangeText={t => setFormData(p => ({ ...p, phone: t }))}
+                    onChangeText={t => setFormData(p => ({ ...p, phone: t.replace(/[^0-9]/g, '').slice(0, 10) }))}
                     placeholder="+1 (212) 555-0100"
                     placeholderTextColor="#94a3b8"
                     keyboardType="phone-pad"

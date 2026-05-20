@@ -4,6 +4,11 @@ from .models import User
 
 
 class UserSerializer(serializers.ModelSerializer):
+    business = serializers.SerializerMethodField()
+
+    def get_business(self, obj):
+        return obj.business_id  # raw FK integer — avoids DoesNotExist if business was deleted
+
     class Meta:
         model  = User
         fields = ('id', 'email', 'full_name', 'role', 'phone', 'date_of_birth', 'business', 'email_verified', 'created_at')
@@ -11,8 +16,8 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
-    password      = serializers.CharField(write_only=True, min_length=8)
-    password2     = serializers.CharField(write_only=True)
+    password      = serializers.CharField(write_only=True, min_length=8, max_length=8)
+    password2     = serializers.CharField(write_only=True, min_length=8, max_length=8)
     date_of_birth = serializers.DateField(required=False, allow_null=True)
 
     class Meta:
@@ -44,22 +49,37 @@ class LoginSerializer(serializers.Serializer):
 
 
 class EmployeeSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, required=False, min_length=8)
+    password          = serializers.CharField(write_only=True, required=False, min_length=8, max_length=8)
+    assigned_services = serializers.PrimaryKeyRelatedField(
+        many=True,
+        required=False,
+        queryset=__import__('services.models', fromlist=['Service']).Service.objects.all(),
+    )
 
     class Meta:
         model  = User
-        fields = ('id', 'email', 'full_name', 'role', 'phone', 'business', 'password', 'created_at')
+        fields = (
+            'id', 'email', 'full_name', 'role', 'phone', 'business',
+            'password', 'counter_number', 'assigned_services', 'created_at',
+        )
         read_only_fields = ('id', 'created_at')
 
     def create(self, validated_data):
-        password = validated_data.pop('password', 'changeme123')
-        return User.objects.create_user(password=password, **validated_data)
+        password          = validated_data.pop('password', 'changeme')
+        assigned_services = validated_data.pop('assigned_services', [])
+        user = User.objects.create_user(password=password, **validated_data)
+        if assigned_services:
+            user.assigned_services.set(assigned_services)
+        return user
 
     def update(self, instance, validated_data):
-        password = validated_data.pop('password', None)
+        password          = validated_data.pop('password', None)
+        assigned_services = validated_data.pop('assigned_services', None)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         if password:
             instance.set_password(password)
+        if assigned_services is not None:
+            instance.assigned_services.set(assigned_services)
         instance.save()
         return instance

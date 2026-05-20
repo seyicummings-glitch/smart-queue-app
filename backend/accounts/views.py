@@ -4,7 +4,7 @@ from django.conf import settings
 from rest_framework import status, generics, filters
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import User, EmailOTP
@@ -119,6 +119,19 @@ class ResendOTPView(APIView):
             return Response({'detail': 'Email already verified.'})
         _send_otp_email(request.user)
         return Response({'detail': 'A new verification code has been sent to your email.'})
+
+
+class MyCounterView(APIView):
+    """Returns the calling staff member's counter number and assigned services."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        services = list(user.assigned_services.all().values('id', 'name'))
+        return Response({
+            'counter_number':     user.counter_number,
+            'assigned_services':  services,
+        })
 
 
 class EmployeeListCreateView(generics.ListCreateAPIView):

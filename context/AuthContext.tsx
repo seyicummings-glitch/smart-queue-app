@@ -7,7 +7,7 @@ import React, {
   createContext, useContext, useState, useEffect, ReactNode,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { api, storeTokens, clearTokens, getAccessToken } from '../lib/api';
+import { api, storeTokens, clearTokens, getAccessToken, initServerUrl } from '../lib/api';
 import type { User } from '../lib/supabase';   // re-use existing type shape
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -71,10 +71,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user,    setUser]    = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // On mount: check for stored token and restore session
+  // On mount: load saved server URL, then restore session
   useEffect(() => {
     (async () => {
       try {
+        await initServerUrl();
         const token = await getAccessToken();
         if (!token) { setLoading(false); return; }
 
@@ -132,8 +133,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     const refresh = await AsyncStorage.getItem('sqms_refresh');
     if (refresh) {
-      // Best-effort — don't block sign-out if request fails
-      await api.post('/accounts/logout/', { refresh }).catch(() => {});
+      // Fire-and-forget: never let a network failure block local sign-out
+      api.post('/accounts/logout/', { refresh }).catch(() => {});
     }
     await clearTokens();
     setUser(null);

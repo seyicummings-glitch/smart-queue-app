@@ -9,6 +9,7 @@ export type StaffQueue = {
 };
 
 export type ActiveTicket = {
+  ticketId?: number;        // backend PK — used to cancel via API
   ticketNumber: string;
   service: string;
   industry: string;
@@ -17,6 +18,7 @@ export type ActiveTicket = {
   peopleAhead: number;
   issuedAt: string;
   status: 'waiting' | 'serving' | 'completed';
+  aheadTickets?: string[];  // ticket numbers of people ahead
   counter?: string;
 };
 

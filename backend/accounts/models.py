@@ -39,6 +39,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     )
     phone          = models.CharField(max_length=20, blank=True)
     date_of_birth  = models.DateField(null=True, blank=True)
+    counter_number = models.PositiveIntegerField(null=True, blank=True)
+    assigned_services = models.ManyToManyField(
+        'services.Service',
+        blank=True,
+        related_name='assigned_staff',
+    )
     is_active      = models.BooleanField(default=True)
     is_staff       = models.BooleanField(default=False)
     email_verified = models.BooleanField(default=False)

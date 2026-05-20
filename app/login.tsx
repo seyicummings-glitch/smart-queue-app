@@ -7,17 +7,19 @@ import {
   TouchableOpacity,
   TextInput,
   Modal,
-  SafeAreaView,
   KeyboardAvoidingView,
   Platform,
   Alert,
   ActivityIndicator,
   StatusBar,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppContext } from '@/context/AppContext';
 import { useAuth } from '@/context/AuthContext';
+import { setServerUrl, getStoredServerUrl } from '@/lib/api';
+import AppLogo from '@/components/AppLogo';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -431,6 +433,20 @@ function getPasswordStrength(password: string): { level: number; label: string; 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
+function friendlyError(error: string): string {
+  const e = error.toLowerCase();
+  if (e.includes('timed out') || e.includes('network') || e.includes('connect') || e.includes('530') || e.includes('502') || e.includes('fetch') || e.includes('failed to fetch')) {
+    return 'Cannot reach the server. Make sure Django is running and the tunnel is active.';
+  }
+  if (e.includes('credentials') || e.includes('invalid') || e.includes('wrong') || e.includes('400')) {
+    return 'Wrong email or password. Please try again.';
+  }
+  if (e.includes('disabled') || e.includes('not active')) {
+    return 'This account has been disabled. Contact support.';
+  }
+  return error;
+}
+
 export default function LoginScreen() {
   const router = useRouter();
   const { setRole } = useAppContext();
@@ -438,8 +454,22 @@ export default function LoginScreen() {
 
   const [currentView, setCurrentView] = useState<AuthView>('login');
   const [language, setLanguage] = useState<Language>('en');
-  const [showLangModal, setShowLangModal] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [showLangModal,    setShowLangModal]    = useState(false);
+  const [showServerModal,  setShowServerModal]  = useState(false);
+  const [serverUrlInput,   setServerUrlInput]   = useState('');
+  const [serverUrlSaved,   setServerUrlSaved]   = useState('');
+  const [logoTapCount,     setLogoTapCount]     = useState(0);
+  const logoTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [submitting,   setSubmitting]   = useState(false);
+  const [loginError,   setLoginError]   = useState('');
+  const [signupError,  setSignupError]  = useState('');
+
+  // Load the saved server URL on mount
+  useEffect(() => {
+    getStoredServerUrl().then(url => {
+      if (url) { setServerUrlInput(url); setServerUrlSaved(url); }
+    });
+  }, []);
 
   // Form fields
   const [email, setEmail] = useState('');
@@ -500,16 +530,17 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
-      Alert.alert('Error', 'Please enter your email and password.');
+      setLoginError('Please enter your email and password.');
       return;
     }
 
+    setLoginError('');
     setSubmitting(true);
     const { error, role } = await signIn(email.trim(), password);
     setSubmitting(false);
 
     if (error) {
-      Alert.alert('Sign In Failed', error);
+      setLoginError(friendlyError(error));
       return;
     }
 
@@ -525,12 +556,13 @@ export default function LoginScreen() {
       Alert.alert('Error', 'Passwords do not match.');
       return;
     }
+    setSignupError('');
     setSubmitting(true);
     const { error } = await signUp(email.trim(), password, fullName.trim(), undefined, dob || undefined);
     setSubmitting(false);
 
     if (error) {
-      Alert.alert('Sign Up Failed', error);
+      setSignupError(friendlyError(error));
       return;
     }
 
@@ -591,13 +623,82 @@ export default function LoginScreen() {
     navigateByRole('customer');
   };
 
+  const handleSaveServerUrl = async () => {
+    const url = serverUrlInput.trim();
+    if (!url) { Alert.alert('Error', 'Please enter a server URL.'); return; }
+    await setServerUrl(url);
+    setServerUrlSaved(url);
+    setShowServerModal(false);
+    Alert.alert('Saved', 'Server URL updated. Try logging in now.');
+  };
+
+  const handleLogoTap = () => {
+    const next = logoTapCount + 1;
+    setLogoTapCount(next);
+    if (logoTapTimer.current) clearTimeout(logoTapTimer.current);
+    if (next >= 5) {
+      setLogoTapCount(0);
+      setShowServerModal(true);
+    } else {
+      logoTapTimer.current = setTimeout(() => setLogoTapCount(0), 1500);
+    }
+  };
+
   // -- Render helpers --
+
+  const renderServerModal = () => (
+    <Modal visible={showServerModal} transparent animationType="slide" onRequestClose={() => setShowServerModal(false)}>
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={() => setShowServerModal(false)} />
+        <View style={styles.serverSheet}>
+          <View style={styles.serverSheetHandle} />
+          <Text style={styles.serverSheetTitle}>Server URL</Text>
+          <Text style={styles.serverSheetSub}>
+            Paste your tunnel URL (e.g. Cloudflare, ngrok) or your local network address. Saved on device — no rebuild needed.
+          </Text>
+
+          {!!serverUrlSaved && (
+            <View style={styles.serverCurrentRow}>
+              <MaterialIcons name="check-circle" size={14} color="#059669" />
+              <Text style={styles.serverCurrentTxt} numberOfLines={1}>{serverUrlSaved}</Text>
+            </View>
+          )}
+
+          <View style={styles.serverInputRow}>
+            <MaterialIcons name="dns" size={18} color="#94a3b8" />
+            <TextInput
+              style={styles.serverInput}
+              value={serverUrlInput}
+              onChangeText={setServerUrlInput}
+              placeholder="https://xxxx.trycloudflare.com"
+              placeholderTextColor="#94a3b8"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+            />
+          </View>
+
+          <Text style={styles.serverHint}>
+            Examples:{'\n'}
+            {'  '}https://your-tunnel.trycloudflare.com{'\n'}
+            {'  '}http://192.168.1.5:8000{'\n'}
+            {'  '}http://10.0.2.2:8000 (Android emulator)
+          </Text>
+
+          <TouchableOpacity style={styles.serverSaveBtn} onPress={handleSaveServerUrl} activeOpacity={0.85}>
+            <MaterialIcons name="save" size={16} color="#fff" />
+            <Text style={styles.serverSaveBtnTxt}>Save & Use This URL</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
 
   const renderHeader = () => (
     <View style={styles.headerSection}>
-      <View style={styles.logoSmall}>
-        <Text style={styles.logoSmallLetter}>S</Text>
-      </View>
+      <TouchableOpacity onPress={handleLogoTap} activeOpacity={1}>
+        <AppLogo size={64} />
+      </TouchableOpacity>
       <Text style={styles.appTitle}>SQMS</Text>
       <Text style={styles.appSubtitle}>Smart Queue Management System</Text>
     </View>
@@ -672,7 +773,7 @@ export default function LoginScreen() {
           <TextInput
             style={styles.inputWithIcon}
             value={email}
-            onChangeText={setEmail}
+            onChangeText={v => { setEmail(v); setLoginError(''); }}
             placeholder="you@example.com"
             placeholderTextColor="#94a3b8"
             keyboardType="email-address"
@@ -693,7 +794,7 @@ export default function LoginScreen() {
           <TextInput
             style={styles.inputWithIcon}
             value={password}
-            onChangeText={setPassword}
+            onChangeText={v => { setPassword(v); setLoginError(''); }}
             placeholder="••••••••"
             placeholderTextColor="#94a3b8"
             secureTextEntry={!showPassword}
@@ -707,6 +808,13 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {!!loginError && (
+        <View style={styles.inlineError}>
+          <MaterialIcons name="error-outline" size={15} color="#e11d48" />
+          <Text style={styles.inlineErrorText}>{loginError}</Text>
+        </View>
+      )}
 
       <TouchableOpacity
         style={[styles.primaryButton, submitting && styles.primaryButtonDisabled]}
@@ -799,6 +907,7 @@ export default function LoginScreen() {
             placeholder="••••••••"
             placeholderTextColor="#94a3b8"
             secureTextEntry={!showPassword}
+            maxLength={8}
           />
           <TouchableOpacity onPress={() => setShowPassword(p => !p)} style={styles.eyeButton}>
             <MaterialIcons
@@ -849,6 +958,13 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {!!signupError && (
+        <View style={styles.inlineError}>
+          <MaterialIcons name="error-outline" size={15} color="#e11d48" />
+          <Text style={styles.inlineErrorText}>{signupError}</Text>
+        </View>
+      )}
 
       <TouchableOpacity
         style={[styles.primaryButton, submitting && styles.primaryButtonDisabled]}
@@ -1051,6 +1167,8 @@ export default function LoginScreen() {
           <View style={styles.bottomPad} />
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {renderServerModal()}
     </SafeAreaView>
   );
 }
@@ -1234,6 +1352,24 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     paddingVertical: 12,
   },
+  inlineError: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#fff1f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 4,
+  },
+  inlineErrorText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#e11d48',
+    fontWeight: '600',
+    lineHeight: 18,
+  },
   eyeButton: {
     paddingLeft: 10,
     paddingVertical: 10,
@@ -1342,4 +1478,52 @@ const styles = StyleSheet.create({
   resendTextDisabled: {
     color: '#94a3b8',
   },
+
+  // Server URL row (inside login card)
+  serverRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    marginTop: 14, paddingTop: 14,
+    borderTopWidth: 1, borderTopColor: '#f1f5f9',
+  },
+  serverRowTxt: {
+    flex: 1, fontSize: 11, color: '#94a3b8', fontWeight: '500',
+  },
+
+  // Server URL modal sheet
+  serverSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    padding: 24, paddingBottom: Platform.OS === 'ios' ? 44 : 28,
+    gap: 14,
+  },
+  serverSheetHandle: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: '#e2e8f0', alignSelf: 'center', marginBottom: 4,
+  },
+  serverSheetTitle: { fontSize: 18, fontWeight: '900', color: '#0f172a' },
+  serverSheetSub: { fontSize: 13, color: '#64748b', fontWeight: '500', lineHeight: 20 },
+  serverCurrentRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#ecfdf5', borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 8,
+  },
+  serverCurrentTxt: { flex: 1, fontSize: 12, color: '#065f46', fontWeight: '600' },
+  serverInputRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0',
+    borderRadius: 14, paddingHorizontal: 14, minHeight: 48,
+  },
+  serverInput: {
+    flex: 1, fontSize: 13, color: '#0f172a', fontWeight: '500', paddingVertical: 12,
+  },
+  serverHint: {
+    fontSize: 11, color: '#94a3b8', fontWeight: '500', lineHeight: 18,
+    backgroundColor: '#f8fafc', borderRadius: 10, padding: 12,
+  },
+  serverSaveBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: '#2563eb', borderRadius: 14, paddingVertical: 14,
+    shadowColor: '#2563eb', shadowOpacity: 0.25, shadowRadius: 8, elevation: 4,
+  },
+  serverSaveBtnTxt: { fontSize: 14, fontWeight: '700', color: '#fff' },
 });

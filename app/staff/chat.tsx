@@ -7,12 +7,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useAppContext } from '@/context/AppContext';
 import BottomNav from '@/components/BottomNav';
 import { api } from '@/lib/api';
 
 type Tab = 'conversations' | 'compose';
-type RecipientRole = 'staff' | 'super_admin' | 'admin';
 
 type Reply = {
   id: number;
@@ -48,43 +46,22 @@ function toArr<T>(d: any): T[] {
   return Array.isArray(d) ? d : (d?.results ?? []);
 }
 
-const RECIPIENT_OPTIONS: { label: string; value: RecipientRole; color: string; bg: string }[] = [
-  { label: 'Staff',       value: 'staff',       color: '#059669', bg: '#ecfdf5' },
-  { label: 'Super Admin', value: 'super_admin', color: '#7c3aed', bg: '#f5f3ff' },
-];
-
-const SUPER_ADMIN_OPTIONS: { label: string; value: RecipientRole; color: string; bg: string }[] = [
-  { label: 'Admin',  value: 'admin',  color: '#2563eb', bg: '#eff6ff' },
-  { label: 'Staff',  value: 'staff',  color: '#059669', bg: '#ecfdf5' },
-];
-
-const ROLE_COLOR: Record<string, string> = {
-  staff: '#059669', admin: '#2563eb', super_admin: '#7c3aed',
-};
-
-export default function AdminMessages() {
+export default function StaffChat() {
   const router = useRouter();
-  const { role } = useAppContext();
-  const isSuperAdmin = role === 'super_admin' || role === 'superadmin';
-  const myRole = isSuperAdmin ? 'super_admin' : 'admin';
 
-  const pickerOptions = isSuperAdmin ? SUPER_ADMIN_OPTIONS : RECIPIENT_OPTIONS;
-
-  const [tab,           setTab]           = useState<Tab>('conversations');
+  const [tab,          setTab]          = useState<Tab>('conversations');
   const [conversations, setConversations] = useState<Msg[]>([]);
-  const [loading,       setLoading]       = useState(true);
-  const [refresh,       setRefresh]       = useState(false);
-  const [sending,       setSending]       = useState(false);
-  const [replying,      setReplying]      = useState(false);
-  const [showPicker,    setShowPicker]    = useState(false);
+  const [loading,      setLoading]      = useState(true);
+  const [refresh,      setRefresh]      = useState(false);
+  const [sending,      setSending]      = useState(false);
+  const [replying,     setReplying]     = useState(false);
 
   const [subject,   setSubject]   = useState('');
   const [body,      setBody]      = useState('');
-  const [recipient, setRecipient] = useState<RecipientRole>(isSuperAdmin ? 'admin' : 'staff');
   const [selected,  setSelected]  = useState<Msg | null>(null);
   const [replyText, setReplyText] = useState('');
 
-  const unreadCount = conversations.filter(m => m.recipient_role === myRole && !m.is_read).length;
+  const unreadCount = conversations.filter(m => m.recipient_role === 'staff' && !m.is_read).length;
 
   const fetchAll = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -100,7 +77,7 @@ export default function AdminMessages() {
     return () => clearInterval(t);
   }, [fetchAll]);
 
-  // Keep selected in sync with background refreshes
+  // Keep selected in sync with latest data (replies update in background)
   useEffect(() => {
     if (selected) {
       const updated = conversations.find(m => m.id === selected.id);
@@ -111,7 +88,7 @@ export default function AdminMessages() {
   const openMsg = async (m: Msg) => {
     setSelected(m);
     setReplyText('');
-    if (!m.is_read && m.recipient_role === myRole) {
+    if (!m.is_read && m.recipient_role === 'staff') {
       await api.post(`/notifications/messages/${m.id}/read/`, {});
       setConversations(prev => prev.map(x => x.id === m.id ? { ...x, is_read: true } : x));
     }
@@ -137,34 +114,35 @@ export default function AdminMessages() {
     }
     setSending(true);
     const { error } = await api.post('/notifications/messages/send/', {
-      recipient_role: recipient,
+      recipient_role: 'admin',
       subject: subject.trim(),
       body: body.trim(),
     });
     setSending(false);
     if (error) { Alert.alert('Error', error); return; }
-    const destLabel = pickerOptions.find(o => o.value === recipient)?.label ?? recipient;
     setSubject(''); setBody('');
-    Alert.alert('Sent', `Message sent to ${destLabel}.`);
+    Alert.alert('Sent', 'Your message has been sent to the Admin team.');
     setTab('conversations');
     fetchAll(true);
   };
 
-  const currentOpt = pickerOptions.find(o => o.value === recipient) ?? pickerOptions[0];
-
   return (
-    <SafeAreaView style={s.container}>
+    <SafeAreaView style={s.container} edges={['top']}>
       {/* Header */}
       <View style={s.header}>
-        <TouchableOpacity onPress={() => router.replace('/admin/dashboard' as any)} style={s.backBtn}>
+        <TouchableOpacity onPress={() => router.replace('/staff/dashboard' as any)} style={s.backBtn}>
           <MaterialIcons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
         <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text style={s.headerTitle}>{isSuperAdmin ? 'Super Admin' : 'Admin'} Messages</Text>
-          <Text style={s.headerSub}>{unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}</Text>
+          <Text style={s.headerTitle}>Team Chat</Text>
+          <Text style={s.headerSub}>
+            {unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}
+          </Text>
         </View>
         {unreadCount > 0 && (
-          <View style={s.unreadBadge}><Text style={s.unreadBadgeText}>{unreadCount}</Text></View>
+          <View style={s.unreadBadge}>
+            <Text style={s.unreadBadgeText}>{unreadCount}</Text>
+          </View>
         )}
       </View>
 
@@ -182,9 +160,7 @@ export default function AdminMessages() {
           style={[s.tabItem, tab === 'compose' && s.tabActive]}
           onPress={() => setTab('compose')}
         >
-          <Text style={[s.tabLabel, tab === 'compose' && s.tabLabelActive]}>
-            {isSuperAdmin ? 'Broadcast' : 'New Message'}
-          </Text>
+          <Text style={[s.tabLabel, tab === 'compose' && s.tabLabelActive]}>New Message</Text>
         </TouchableOpacity>
       </View>
 
@@ -201,14 +177,12 @@ export default function AdminMessages() {
               <View style={s.empty}>
                 <MaterialIcons name="forum" size={52} color="#cbd5e1" />
                 <Text style={s.emptyTitle}>No conversations yet</Text>
-                <Text style={s.emptySub}>Send a message to start a conversation</Text>
+                <Text style={s.emptySub}>Tap "New Message" to start a conversation with Admin</Text>
               </View>
             ) : conversations.map(msg => {
-              const isMine    = msg.sender_role === myRole;
+              const isMine   = msg.sender_role === 'staff';
               const lastReply = msg.replies?.length ? msg.replies[msg.replies.length - 1] : null;
-              const isUnread  = msg.recipient_role === myRole && !msg.is_read;
-              const otherRole = isMine ? msg.recipient_role : msg.sender_role;
-              const otherColor = ROLE_COLOR[otherRole] ?? '#64748b';
+              const isUnread  = !isMine && !msg.is_read;
               const replyCount = msg.replies?.length ?? 0;
 
               return (
@@ -220,11 +194,9 @@ export default function AdminMessages() {
                 >
                   <View style={s.cardRow}>
                     <View style={[s.roleBadge, { backgroundColor: isMine ? '#ecfdf5' : '#eff6ff' }]}>
-                      <MaterialIcons name={isMine ? 'send' : 'inbox'} size={11} color={isMine ? '#059669' : otherColor} />
-                      <Text style={[s.roleBadgeTxt, { color: isMine ? '#059669' : otherColor }]}>
-                        {isMine
-                          ? `You → ${pickerOptions.find(p => p.value === msg.recipient_role)?.label ?? msg.recipient_role}`
-                          : `${msg.sender_name} → You`}
+                      <MaterialIcons name={isMine ? 'send' : 'inbox'} size={11} color={isMine ? '#059669' : '#2563eb'} />
+                      <Text style={[s.roleBadgeTxt, { color: isMine ? '#059669' : '#2563eb' }]}>
+                        {isMine ? 'You → Admin' : 'Admin → You'}
                       </Text>
                     </View>
                     <Text style={s.cardTime}>{timeAgo(lastReply?.created_at ?? msg.created_at)}</Text>
@@ -235,7 +207,7 @@ export default function AdminMessages() {
 
                   <Text style={s.cardPreview} numberOfLines={1}>
                     {lastReply
-                      ? `${lastReply.sender_role === myRole ? 'You' : lastReply.sender_name}: ${lastReply.body}`
+                      ? `${lastReply.sender_role === 'staff' ? 'You' : lastReply.sender_name}: ${lastReply.body}`
                       : msg.body}
                   </Text>
 
@@ -255,22 +227,17 @@ export default function AdminMessages() {
       {/* ── Compose ── */}
       {tab === 'compose' && (
         <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-          {isSuperAdmin && (
-            <View style={s.broadcastBanner}>
-              <MaterialIcons name="campaign" size={22} color="#7c3aed" />
-              <Text style={s.broadcastBannerText}>Broadcast to your team — messages reach all selected recipients instantly.</Text>
-            </View>
-          )}
+          <View style={s.infoBanner}>
+            <MaterialIcons name="info-outline" size={18} color="#2563eb" />
+            <Text style={s.infoBannerText}>
+              Your message will be sent to the Admin team. Replies will appear in your Conversations.
+            </Text>
+          </View>
 
           <View style={s.composeCard}>
             <View style={s.toRow}>
               <Text style={s.toLabel}>To:</Text>
-              <TouchableOpacity
-                style={[s.badge, { backgroundColor: currentOpt.bg }]}
-                onPress={() => setShowPicker(true)}
-              >
-                <Text style={[s.badgeText, { color: currentOpt.color }]}>{currentOpt.label} ▾</Text>
-              </TouchableOpacity>
+              <View style={s.adminBadge}><Text style={s.adminBadgeTxt}>Admin Team</Text></View>
             </View>
             <View style={s.divider} />
             <TextInput
@@ -292,41 +259,14 @@ export default function AdminMessages() {
             />
           </View>
 
-          <TouchableOpacity
-            style={[s.sendBtn, isSuperAdmin && { backgroundColor: '#7c3aed' }, sending && { opacity: 0.6 }]}
-            onPress={handleSend}
-            disabled={sending}
-          >
+          <TouchableOpacity style={[s.sendBtn, sending && { opacity: 0.6 }]} onPress={handleSend} disabled={sending}>
             {sending
               ? <ActivityIndicator color="#fff" size="small" />
-              : <>
-                  <MaterialIcons name={isSuperAdmin ? 'campaign' : 'send'} size={18} color="#fff" />
-                  <Text style={s.sendBtnText}>Send to {currentOpt.label}</Text>
-                </>
+              : <><MaterialIcons name="send" size={18} color="#fff" /><Text style={s.sendBtnText}>Send to Admin</Text></>
             }
           </TouchableOpacity>
         </ScrollView>
       )}
-
-      {/* ── Recipient picker ── */}
-      <Modal visible={showPicker} transparent animationType="slide">
-        <TouchableOpacity style={s.overlay} activeOpacity={1} onPress={() => setShowPicker(false)} />
-        <View style={s.sheet}>
-          <Text style={s.sheetTitle}>Send Message To</Text>
-          {pickerOptions.map(opt => (
-            <TouchableOpacity
-              key={opt.value}
-              style={[s.sheetOption, recipient === opt.value && { backgroundColor: opt.bg, borderRadius: 10, paddingHorizontal: 12, marginHorizontal: -8 }]}
-              onPress={() => { setRecipient(opt.value); setShowPicker(false); }}
-            >
-              <Text style={[s.sheetOptionText, recipient === opt.value && { color: opt.color, fontWeight: '700' }]}>
-                {opt.label}
-              </Text>
-              {recipient === opt.value && <MaterialIcons name="check" size={18} color={opt.color} />}
-            </TouchableOpacity>
-          ))}
-        </View>
-      </Modal>
 
       {/* ── Thread modal ── */}
       <Modal visible={!!selected} transparent animationType="slide">
@@ -338,9 +278,7 @@ export default function AdminMessages() {
                   <View style={{ flex: 1 }}>
                     <Text style={s.detailTitle} numberOfLines={2}>{selected.subject}</Text>
                     <Text style={s.detailSub}>
-                      {selected.sender_role === myRole
-                        ? `You → ${pickerOptions.find(p => p.value === selected.recipient_role)?.label ?? selected.recipient_role}`
-                        : `${selected.sender_name} → You`}
+                      {selected.sender_role === 'staff' ? 'You → Admin' : `Admin → You`}
                     </Text>
                   </View>
                   <TouchableOpacity onPress={() => setSelected(null)}>
@@ -354,10 +292,10 @@ export default function AdminMessages() {
                   contentContainerStyle={{ gap: 10, paddingBottom: 8 }}
                 >
                   {/* Original message */}
-                  <View style={[s.bubble, selected.sender_role === myRole ? s.bubbleMe : s.bubbleOther]}>
+                  <View style={[s.bubble, selected.sender_role === 'staff' ? s.bubbleMe : s.bubbleOther]}>
                     <View style={s.bubbleHead}>
-                      <Text style={[s.bubbleFrom, { color: selected.sender_role === myRole ? '#059669' : '#2563eb' }]}>
-                        {selected.sender_role === myRole ? 'You' : selected.sender_name}
+                      <Text style={[s.bubbleFrom, { color: selected.sender_role === 'staff' ? '#059669' : '#2563eb' }]}>
+                        {selected.sender_role === 'staff' ? 'You' : selected.sender_name}
                       </Text>
                       <Text style={s.bubbleTime}>{timeAgo(selected.created_at)}</Text>
                     </View>
@@ -366,7 +304,7 @@ export default function AdminMessages() {
 
                   {/* Replies */}
                   {(selected.replies ?? []).map(r => {
-                    const isMe = r.sender_role === myRole;
+                    const isMe = r.sender_role === 'staff';
                     return (
                       <View key={r.id} style={[s.bubble, isMe ? s.bubbleMe : s.bubbleOther]}>
                         <View style={s.bubbleHead}>
@@ -434,13 +372,13 @@ const s = StyleSheet.create({
   tabLabel:       { fontSize: 12, fontWeight: '600', color: '#94a3b8' },
   tabLabelActive: { color: '#2563eb', fontWeight: '700' },
 
-  content: { padding: 16, gap: 10, paddingBottom: 40 },
+  content:  { padding: 16, gap: 10, paddingBottom: 40 },
 
   card:       { backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0', padding: 14, gap: 6 },
   cardUnread: { borderLeftWidth: 3, borderLeftColor: '#2563eb' },
   cardRow:    { flexDirection: 'row', alignItems: 'center', gap: 8 },
   roleBadge:  { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
-  roleBadgeTxt: { fontSize: 11, fontWeight: '700' },
+  roleBadgeTxt:{ fontSize: 11, fontWeight: '700' },
   cardTime:   { fontSize: 11, color: '#94a3b8', fontWeight: '500', flex: 1, textAlign: 'right' },
   dot:        { width: 8, height: 8, borderRadius: 4, backgroundColor: '#2563eb' },
   cardTitle:  { fontSize: 14, fontWeight: '800', color: '#0f172a' },
@@ -448,11 +386,11 @@ const s = StyleSheet.create({
   replyCountRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   replyCountTxt: { fontSize: 11, color: '#94a3b8', fontWeight: '600' },
 
-  badge:    { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
-  badgeText:{ fontSize: 11, fontWeight: '700' },
+  adminBadge:  { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: '#eff6ff' },
+  adminBadgeTxt: { fontSize: 11, fontWeight: '700', color: '#2563eb' },
 
-  broadcastBanner:     { flexDirection: 'row', alignItems: 'flex-start', gap: 10, backgroundColor: '#f5f3ff', borderRadius: 14, padding: 14 },
-  broadcastBannerText: { flex: 1, fontSize: 13, color: '#5b21b6', fontWeight: '500', lineHeight: 19 },
+  infoBanner:     { flexDirection: 'row', alignItems: 'flex-start', gap: 10, backgroundColor: '#eff6ff', borderRadius: 14, padding: 14 },
+  infoBannerText: { flex: 1, fontSize: 13, color: '#1d4ed8', fontWeight: '500', lineHeight: 19 },
 
   composeCard:  { backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden' },
   toRow:        { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 14 },
@@ -466,12 +404,6 @@ const s = StyleSheet.create({
   empty:      { alignItems: 'center', paddingVertical: 60, gap: 10 },
   emptyTitle: { fontSize: 16, fontWeight: '700', color: '#64748b' },
   emptySub:   { fontSize: 13, color: '#94a3b8', textAlign: 'center', paddingHorizontal: 20 },
-
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
-  sheet:   { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, gap: 4, paddingBottom: 40 },
-  sheetTitle:      { fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 8 },
-  sheetOption:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-  sheetOptionText: { fontSize: 14, fontWeight: '600', color: '#475569' },
 
   detailOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
   detailSheet:   { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, height: '82%' },

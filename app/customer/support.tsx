@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
+import BottomNav from '@/components/BottomNav';
 import {
   useMessages,
   SupportTicket,
@@ -123,10 +124,10 @@ export default function CustomerSupport() {
   };
 
   return (
-    <SafeAreaView style={s.container}>
+    <SafeAreaView style={s.container} edges={['top']}>
       {/* Header */}
       <View style={s.header}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
+        <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/customer/home' as any)} style={s.backBtn}>
           <MaterialIcons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
         <View style={{ flex: 1, marginLeft: 12 }}>
@@ -479,6 +480,7 @@ export default function CustomerSupport() {
           </KeyboardAvoidingView>
         </View>
       </Modal>
+      <BottomNav />
     </SafeAreaView>
   );
 }

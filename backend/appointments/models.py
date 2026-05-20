@@ -15,16 +15,23 @@ class Appointment(models.Model):
         on_delete=models.CASCADE,
         related_name='appointments',
     )
+    # FK fields kept for future use but nullable so bookings work without pre-seeded data
     service          = models.ForeignKey(
         'services.Service',
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name='appointments',
+        null=True, blank=True,
     )
     branch           = models.ForeignKey(
         'branches.Branch',
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name='appointments',
+        null=True, blank=True,
     )
+    # Text fallbacks used when FK records don't exist
+    service_name_text = models.CharField(max_length=200, blank=True)
+    branch_name_text  = models.CharField(max_length=200, blank=True)
+
     appointment_date = models.DateField()
     appointment_time = models.TimeField()
     status           = models.CharField(max_length=20, choices=STATUS, default='scheduled')
@@ -35,10 +42,22 @@ class Appointment(models.Model):
     class Meta:
         ordering = ['-appointment_date', '-appointment_time']
 
+    @property
+    def display_service(self):
+        if self.service_id and self.service:
+            return self.service.name
+        return self.service_name_text or ''
+
+    @property
+    def display_branch(self):
+        if self.branch_id and self.branch:
+            return self.branch.name
+        return self.branch_name_text or ''
+
     def save(self, *args, **kwargs):
         if not self.ticket_number:
             count = Appointment.objects.count() + 1
-            svc   = (self.service.name[:3] if self.service_id else 'APT').upper()
+            svc   = (self.display_service[:3] if self.display_service else 'APT').upper()
             self.ticket_number = f'{svc}-{str(count).zfill(3)}'
         super().save(*args, **kwargs)
 

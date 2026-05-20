@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import timedelta
 from decouple import config
+import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -29,6 +30,7 @@ INSTALLED_APPS = [
     'appointments',
     'analytics',
     'support',
+    'notifications',
 ]
 
 MIDDLEWARE = [
@@ -62,11 +64,9 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'sqms.wsgi.application'
 
+DATABASE_URL = config('DATABASE_URL', default=f'sqlite:///{BASE_DIR / "db.sqlite3"}')
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': dj_database_url.parse(DATABASE_URL, conn_max_age=0)
 }
 
 AUTH_PASSWORD_VALIDATORS = [

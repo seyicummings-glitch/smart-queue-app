@@ -65,7 +65,7 @@ export default function SplashScreen() {
       >
         {/* Logo box */}
         <View style={styles.logoBox}>
-          <Text style={styles.logoLetter}>S</Text>
+          <Text style={styles.logoLetter}>Q</Text>
         </View>
 
         {/* Title */}
@@ -100,7 +100,7 @@ const styles = StyleSheet.create({
   logoBox: {
     width: 80,
     height: 80,
-    backgroundColor: '#fff',
+    backgroundColor: '#2563eb',
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
@@ -110,11 +110,13 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 16,
     elevation: 12,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.3)',
   },
   logoLetter: {
     fontSize: 42,
     fontWeight: '900',
-    color: '#2563eb',
+    color: '#fff',
     letterSpacing: -1,
   },
   title: {

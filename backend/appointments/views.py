@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from .models import Appointment
 from .serializers import AppointmentSerializer
 from accounts.permissions import IsStaffOrAbove
+from notifications.utils import create_notification, notify_staff
 
 
 class AppointmentListCreateView(generics.ListCreateAPIView):
@@ -36,7 +37,9 @@ class AppointmentListCreateView(generics.ListCreateAPIView):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(customer=self.request.user)
+        appt = serializer.save(customer=self.request.user)
+        notify_staff('appointment', 'New Appointment Booked',
+                     f'{appt.display_service} booked by {self.request.user.full_name}')
 
 
 class AppointmentDetailView(generics.RetrieveUpdateAPIView):
@@ -62,6 +65,8 @@ class AppointmentConfirmView(APIView):
             return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
         appt.status = 'confirmed'
         appt.save()
+        create_notification(appt.customer, 'success', 'Appointment Confirmed',
+                            f'Your {appt.display_service} appointment on {appt.appointment_date} has been confirmed.')
         return Response(AppointmentSerializer(appt).data)
 
 
@@ -81,6 +86,9 @@ class AppointmentCancelView(APIView):
 
         appt.status = 'cancelled'
         appt.save()
+        if request.user != appt.customer:
+            create_notification(appt.customer, 'alert', 'Appointment Cancelled',
+                                f'Your {appt.display_service} appointment on {appt.appointment_date} was cancelled by staff.')
         return Response(AppointmentSerializer(appt).data)
 
 
@@ -94,4 +102,6 @@ class AppointmentCompleteView(APIView):
             return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
         appt.status = 'completed'
         appt.save()
+        create_notification(appt.customer, 'success', 'Appointment Completed',
+                            f'Your {appt.display_service} appointment has been completed. Thank you!')
         return Response(AppointmentSerializer(appt).data)

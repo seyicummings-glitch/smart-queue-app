@@ -1,460 +1,698 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  StatusBar,
-  Modal,
-  TextInput,
-  KeyboardAvoidingView,
-  Platform,
-  Alert,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  StatusBar, Modal, TextInput, KeyboardAvoidingView,
+  Platform, Alert, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import BottomNav from '@/components/BottomNav';
+import { api } from '@/lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type WorkingStatus  = 'Working Now' | 'Off Duty';
-type EmployeeStatus = 'Active' | 'Inactive';
 
 type Employee = {
   id: number;
-  name: string;
   email: string;
-  role: string;
+  full_name: string;
+  role: 'staff' | 'admin' | 'super_admin';
+  phone: string;
+  counter_number: number | null;
+  assigned_services: number[];
+  created_at: string;
+};
+
+type BackendService = {
+  id: number;
+  name: string;
   industry: string;
-  counter: number;
-  workingStatus: WorkingStatus;
-  status: EmployeeStatus;
 };
 
-// ─── Static data ──────────────────────────────────────────────────────────────
-const INDUSTRY_LIST = [
-  'Banking & Finance',
-  'Healthcare',
-  'Retail',
-  'Government Services',
-  'Education',
-  'Corporate Office',
-];
+// ─── Same 6 industries + services as the customer-facing app ─────────────────
 
-const INDUSTRIES = ['All', ...INDUSTRY_LIST];
-
-const WORKING_FILTERS = ['All', 'Working Now', 'Off Duty'] as const;
-type WorkingFilter = typeof WORKING_FILTERS[number];
-
-const INITIAL_EMPLOYEES: Employee[] = [
-  { id: 1, name: 'Sarah Mitchell',  email: 'sarah.mitchell@bank.com', role: 'Teller',          industry: 'Banking & Finance',   counter: 3, workingStatus: 'Working Now', status: 'Active'   },
-  { id: 2, name: 'James Okafor',    email: 'j.okafor@hospital.org',   role: 'Receptionist',     industry: 'Healthcare',          counter: 1, workingStatus: 'Working Now', status: 'Active'   },
-  { id: 3, name: 'Linda Cruz',      email: 'l.cruz@retail.com',       role: 'Customer Service', industry: 'Retail',              counter: 5, workingStatus: 'Off Duty',    status: 'Active'   },
-  { id: 4, name: 'Michael Yeboah',  email: 'm.yeboah@gov.ng',         role: 'Clerk',            industry: 'Government Services', counter: 2, workingStatus: 'Working Now', status: 'Active'   },
-  { id: 5, name: 'Grace Tan',       email: 'g.tan@edu.ph',            role: 'Registrar',        industry: 'Education',           counter: 4, workingStatus: 'Off Duty',    status: 'Inactive' },
-  { id: 6, name: 'Daniel Park',     email: 'd.park@corp.com',         role: 'IT Support',       industry: 'Corporate Office',    counter: 2, workingStatus: 'Working Now', status: 'Active'   },
-  { id: 7, name: 'Amina Hassan',    email: 'a.hassan@bank.com',       role: 'Senior Teller',    industry: 'Banking & Finance',   counter: 1, workingStatus: 'Off Duty',    status: 'Active'   },
-  { id: 8, name: 'Carlos Reyes',    email: 'c.reyes@hospital.org',    role: 'Nurse',            industry: 'Healthcare',          counter: 6, workingStatus: 'Working Now', status: 'Active'   },
-];
-
-const INDUSTRY_COLORS: Record<string, { color: string; bg: string }> = {
-  'Banking & Finance':   { color: '#2563eb', bg: '#eff6ff' },
-  Healthcare:            { color: '#059669', bg: '#ecfdf5' },
-  Retail:                { color: '#f97316', bg: '#fff7ed' },
-  'Government Services': { color: '#475569', bg: '#f1f5f9' },
-  Education:             { color: '#4f46e5', bg: '#eef2ff' },
-  'Corporate Office':    { color: '#7c3aed', bg: '#f5f3ff' },
-};
-
-// ─── FormField — MUST be outside the main component so React doesn't remount ──
-type FormFieldProps = {
+type IndustryDef = {
+  id: string;
   label: string;
-  value: string;
-  onChangeText: (v: string) => void;
-  placeholder: string;
-  error?: string;
-  keyboardType?: 'default' | 'email-address' | 'numeric';
-  autoCapitalize?: 'none' | 'words' | 'sentences';
+  icon: React.ComponentProps<typeof MaterialIcons>['name'];
+  color: string;
+  bg: string;
+  services: string[];
 };
 
-function FormField({ label, value, onChangeText, placeholder, error, keyboardType = 'default', autoCapitalize = 'words' }: FormFieldProps) {
+const INDUSTRY_SERVICES: IndustryDef[] = [
+  {
+    id: 'banking',
+    label: 'Banking & Finance',
+    icon: 'account-balance',
+    color: '#2563eb',
+    bg: '#eff6ff',
+    services: ['Teller Services', 'Loan Consultation', 'Customer Service', 'Account Opening', 'Card Services'],
+  },
+  {
+    id: 'healthcare',
+    label: 'Healthcare',
+    icon: 'local-hospital',
+    color: '#e11d48',
+    bg: '#fff1f2',
+    services: ['General Practitioner', 'Pharmacy Pickup', 'Blood Test / Lab', 'Dental', 'Specialist Consult'],
+  },
+  {
+    id: 'retail',
+    label: 'Retail',
+    icon: 'shopping-bag',
+    color: '#d97706',
+    bg: '#fffbeb',
+    services: ['Returns & Exchanges', 'Customer Service', 'Tech Support', 'Click & Collect'],
+  },
+  {
+    id: 'government',
+    label: 'Government Services',
+    icon: 'gavel',
+    color: '#475569',
+    bg: '#f1f5f9',
+    services: ['Document Processing', 'Permits & Licenses', 'General Inquiries', 'ID / Passport Renewal'],
+  },
+  {
+    id: 'education',
+    label: 'Education',
+    icon: 'school',
+    color: '#4f46e5',
+    bg: '#eef2ff',
+    services: ['Admissions', 'Registrar', 'Financial Aid', 'Library Services'],
+  },
+  {
+    id: 'corporate',
+    label: 'Corporate Office',
+    icon: 'business',
+    color: '#7c3aed',
+    bg: '#f5f3ff',
+    services: ['Reception', 'HR Services', 'IT Support', 'Facilities'],
+  },
+];
+
+// Total number of services across all 6 industries — used to detect incomplete seed
+const EXPECTED_SERVICE_COUNT = INDUSTRY_SERVICES.reduce((n, ind) => n + ind.services.length, 0);
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const ROLE_STYLE: Record<string, { label: string; color: string; bg: string }> = {
+  staff:       { label: 'Staff',       color: '#2563eb', bg: '#eff6ff' },
+  admin:       { label: 'Admin',       color: '#7c3aed', bg: '#f5f3ff' },
+  super_admin: { label: 'Super Admin', color: '#dc2626', bg: '#fff1f2' },
+};
+
+function toArr<T>(d: any): T[] {
+  return Array.isArray(d) ? d : (d?.results ?? []);
+}
+
+// Build a lookup: "name|industry" → backend service ID
+function buildNameMap(backendServices: BackendService[]): Map<string, number> {
+  const m = new Map<string, number>();
+  backendServices.forEach(s => m.set(`${s.name}|${s.industry}`, s.id));
+  return m;
+}
+
+// Reverse lookup: backend ID → service name
+function idToName(id: number, backendServices: BackendService[]): string {
+  return backendServices.find(s => s.id === id)?.name ?? String(id);
+}
+
+// ─── Service picker ───────────────────────────────────────────────────────────
+
+function ServicePicker({
+  nameMap,
+  selectedIds,
+  onToggleId,
+  seeding,
+}: {
+  nameMap: Map<string, number>;
+  selectedIds: number[];
+  onToggleId: (id: number) => void;
+  seeding: boolean;
+}) {
+  const [openIndustry, setOpenIndustry] = useState<string | null>(null);
+
+  if (seeding) {
+    return (
+      <View style={s.seedingBox}>
+        <ActivityIndicator size="small" color="#2563eb" />
+        <Text style={s.seedingTxt}>Setting up services…</Text>
+      </View>
+    );
+  }
+
   return (
-    <View style={styles.fieldGroup}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <TextInput
-        style={[styles.input, error ? styles.inputError : undefined]}
-        placeholder={placeholder}
-        placeholderTextColor="#94a3b8"
-        value={value}
-        onChangeText={onChangeText}
-        keyboardType={keyboardType}
-        autoCapitalize={autoCapitalize}
-      />
-      {!!error && <Text style={styles.errorText}>{error}</Text>}
+    <View style={s.industryList}>
+      {INDUSTRY_SERVICES.map(ind => {
+        const isOpen = openIndustry === ind.id;
+
+        // Count how many services of this industry are selected
+        const selectedInIndustry = ind.services.filter(name => {
+          const svcId = nameMap.get(`${name}|${ind.id}`);
+          return svcId !== undefined && selectedIds.includes(svcId);
+        }).length;
+
+        return (
+          <View key={ind.id} style={s.industryCard}>
+            {/* Industry header row — tap to expand/collapse */}
+            <TouchableOpacity
+              style={[s.industryHeader, { borderColor: isOpen ? ind.color : '#e2e8f0' }]}
+              onPress={() => setOpenIndustry(isOpen ? null : ind.id)}
+              activeOpacity={0.8}
+            >
+              <View style={[s.industryIcon, { backgroundColor: ind.bg }]}>
+                <MaterialIcons name={ind.icon} size={18} color={ind.color} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.industryLabel, { color: ind.color }]}>{ind.label}</Text>
+                <Text style={s.industrySub}>
+                  {selectedInIndustry > 0
+                    ? `${selectedInIndustry} of ${ind.services.length} selected`
+                    : `${ind.services.length} services`}
+                </Text>
+              </View>
+              {selectedInIndustry > 0 && (
+                <View style={[s.industryBadge, { backgroundColor: ind.bg }]}>
+                  <Text style={[s.industryBadgeTxt, { color: ind.color }]}>{selectedInIndustry}</Text>
+                </View>
+              )}
+              <MaterialIcons
+                name={isOpen ? 'expand-less' : 'expand-more'}
+                size={22}
+                color={ind.color}
+              />
+            </TouchableOpacity>
+
+            {/* Service list — shown when expanded */}
+            {isOpen && (
+              <View style={s.serviceSubList}>
+                {ind.services.map(svcName => {
+                  const svcId = nameMap.get(`${svcName}|${ind.id}`);
+                  const isSelected = svcId !== undefined && selectedIds.includes(svcId);
+                  const available = svcId !== undefined;
+
+                  return (
+                    <TouchableOpacity
+                      key={svcName}
+                      style={[
+                        s.svcRow,
+                        isSelected && { borderColor: ind.color, backgroundColor: ind.bg },
+                        !available && s.svcRowDisabled,
+                      ]}
+                      onPress={() => available && onToggleId(svcId!)}
+                      activeOpacity={available ? 0.75 : 1}
+                    >
+                      <View style={[
+                        s.checkbox,
+                        isSelected && { backgroundColor: ind.color, borderColor: ind.color },
+                        !available && s.checkboxDisabled,
+                      ]}>
+                        {isSelected && <MaterialIcons name="check" size={13} color="#fff" />}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[s.svcName, !available && { color: '#cbd5e1' }]}>
+                          {svcName}
+                        </Text>
+                        {!available && (
+                          <Text style={s.svcNotReady}>not available yet</Text>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        );
+      })}
     </View>
   );
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
+
 export default function EmployeeManagement() {
   const router = useRouter();
 
-  const [employees,        setEmployees]        = useState<Employee[]>(INITIAL_EMPLOYEES);
-  const [selectedIndustry, setSelectedIndustry] = useState('All');
-  const [workingFilter,    setWorkingFilter]    = useState<WorkingFilter>('All');
-  const [modalVisible,     setModalVisible]     = useState(false);
+  const [employees,   setEmployees]   = useState<Employee[]>([]);
+  const [backendSvcs, setBackendSvcs] = useState<BackendService[]>([]);
+  const [nameMap,     setNameMap]     = useState<Map<string, number>>(new Map());
+  const [loading,     setLoading]     = useState(true);
+  const [seeding,     setSeeding]     = useState(false);
+  const [refreshing,  setRefreshing]  = useState(false);
+  const [roleFilter,  setRoleFilter]  = useState<'All' | 'staff' | 'admin'>('All');
 
-  // Form fields as individual state values — avoids object spread re-render issues
-  const [fName,          setFName]          = useState('');
-  const [fEmail,         setFEmail]         = useState('');
-  const [fRole,          setFRole]          = useState('');
-  const [fCounter,       setFCounter]       = useState('1');
-  const [fIndustry,      setFIndustry]      = useState(INDUSTRY_LIST[0]);
-  const [fWorkingStatus, setFWorkingStatus] = useState<WorkingStatus>('Working Now');
-  const [fEmpStatus,     setFEmpStatus]     = useState<EmployeeStatus>('Active');
-  const [errors,         setErrors]         = useState<Record<string, string>>({});
+  // Add employee modal
+  const [addModal,    setAddModal]    = useState(false);
+  const [fName,       setFName]       = useState('');
+  const [fEmail,      setFEmail]      = useState('');
+  const [fRole,       setFRole]       = useState<'staff' | 'admin'>('staff');
+  const [fPhone,      setFPhone]      = useState('');
+  const [fCounter,    setFCounter]    = useState('');
+  const [fServices,   setFServices]   = useState<number[]>([]);
+  const [fErrors,     setFErrors]     = useState<Record<string, string>>({});
+  const [adding,      setAdding]      = useState(false);
 
-  // ── Filtering ────────────────────────────────────────────────────────────
-  const filtered = employees.filter(emp => {
-    const industryOk = selectedIndustry === 'All' || emp.industry === selectedIndustry;
-    const workingOk  = workingFilter    === 'All' || emp.workingStatus === workingFilter;
-    return industryOk && workingOk;
-  });
+  // Edit assignment modal
+  const [assignModal,  setAssignModal]  = useState(false);
+  const [assignTarget, setAssignTarget] = useState<Employee | null>(null);
+  const [aCounter,     setACounter]     = useState('');
+  const [aServices,    setAServices]    = useState<number[]>([]);
+  const [saving,       setSaving]       = useState(false);
 
-  const workingCount = filtered.filter(e => e.workingStatus === 'Working Now').length;
-  const offCount     = filtered.filter(e => e.workingStatus === 'Off Duty').length;
+  // ── Load employees + ensure services exist in DB ─────────────────────────
 
-  // ── Modal helpers ────────────────────────────────────────────────────────
-  const openModal = () => {
-    setFName('');
-    setFEmail('');
-    setFRole('');
-    setFCounter('1');
-    setFIndustry(INDUSTRY_LIST[0]);
-    setFWorkingStatus('Working Now');
-    setFEmpStatus('Active');
-    setErrors({});
-    setModalVisible(true);
+  const loadServices = useCallback(async (): Promise<BackendService[]> => {
+    const { data: first } = await api.get<any>('/services/');
+    const list = toArr<BackendService>(first ?? []);
+
+    if (list.length >= EXPECTED_SERVICE_COUNT) return list;
+
+    // Missing services — seed then re-fetch (seed uses get_or_create, safe to repeat)
+    setSeeding(true);
+    await api.post<any>('/services/seed/', {});
+    setSeeding(false);
+
+    const { data: fresh } = await api.get<any>('/services/');
+    return toArr<BackendService>(fresh ?? list);
+  }, []);
+
+  const fetchAll = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+
+    const [empRes, svcs] = await Promise.all([
+      api.get<any>('/accounts/employees/'),
+      loadServices(),
+    ]);
+
+    if (empRes.data != null) setEmployees(toArr<Employee>(empRes.data));
+    setBackendSvcs(svcs);
+    setNameMap(buildNameMap(svcs));
+
+    setLoading(false);
+    setRefreshing(false);
+  }, [loadServices]);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // ── Derived ──────────────────────────────────────────────────────────────
+
+  const filtered = employees.filter(e =>
+    roleFilter === 'All' ? true : e.role === roleFilter,
+  );
+
+  // ── Add employee ─────────────────────────────────────────────────────────
+
+  const openAdd = () => {
+    setFName(''); setFEmail(''); setFRole('staff');
+    setFPhone(''); setFCounter(''); setFServices([]); setFErrors({});
+    setAddModal(true);
   };
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const e: Record<string, string> = {};
-    if (!fName.trim())  e.name    = 'Full name is required';
-    if (!fEmail.trim()) e.email   = 'Email is required';
-    else if (!/\S+@\S+\.\S+/.test(fEmail)) e.email = 'Enter a valid email address';
-    if (!fRole.trim())  e.role    = 'Role is required';
-    const num = parseInt(fCounter, 10);
-    if (!fCounter.trim() || isNaN(num) || num < 1) e.counter = 'Enter a valid counter number (min 1)';
+    if (!fName.trim())  e.name  = 'Name is required';
+    if (!fEmail.trim()) e.email = 'Email is required';
+    else if (!/\S+@\S+\.\S+/.test(fEmail)) e.email = 'Enter a valid email';
+    if (fCounter.trim() && (isNaN(parseInt(fCounter, 10)) || parseInt(fCounter, 10) < 1))
+      e.counter = 'Counter must be a number ≥ 1';
+    if (Object.keys(e).length > 0) { setFErrors(e); return; }
 
-    if (Object.keys(e).length > 0) {
-      setErrors(e);
-      return;
-    }
-
-    const newEmployee: Employee = {
-      id: Date.now(),
-      name: fName.trim(),
-      email: fEmail.trim(),
-      role: fRole.trim(),
-      industry: fIndustry,
-      counter: num,
-      workingStatus: fWorkingStatus,
-      status: fEmpStatus,
+    setAdding(true);
+    const body: Record<string, unknown> = {
+      full_name:         fName.trim(),
+      email:             fEmail.trim().toLowerCase(),
+      role:              fRole,
+      phone:             fPhone.trim() || '0000000000',
+      password:          'changeme',
+      assigned_services: fServices,
     };
+    if (fCounter.trim()) body.counter_number = parseInt(fCounter, 10);
 
-    setEmployees(prev => [newEmployee, ...prev]);
-    setModalVisible(false);
+    const { error } = await api.post('/accounts/employees/', body);
+    setAdding(false);
+    if (error) { Alert.alert('Error', error); return; }
+    setAddModal(false);
+    Alert.alert('Employee Added', `${fName.trim()} has been added.\nDefault password: changeme`);
+    fetchAll(true);
   };
 
-  const handleDelete = (id: number) => {
-    Alert.alert(
-      'Remove Employee',
-      'Are you sure you want to remove this employee?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Remove', style: 'destructive', onPress: () => setEmployees(prev => prev.filter(e => e.id !== id)) },
-      ],
-    );
+  // ── Delete ────────────────────────────────────────────────────────────────
+
+  const handleDelete = (emp: Employee) => {
+    Alert.alert('Remove Employee', `Remove ${emp.full_name} from the system?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove', style: 'destructive',
+        onPress: async () => {
+          const { error } = await api.delete(`/accounts/employees/${emp.id}/`);
+          if (error) { Alert.alert('Error', error); return; }
+          fetchAll(true);
+        },
+      },
+    ]);
+  };
+
+  // ── Edit assignment ───────────────────────────────────────────────────────
+
+  const openAssign = (emp: Employee) => {
+    setAssignTarget(emp);
+    setACounter(emp.counter_number != null ? String(emp.counter_number) : '');
+    setAServices(emp.assigned_services ?? []);
+    setAssignModal(true);
+  };
+
+  const handleSaveAssign = async () => {
+    if (!assignTarget) return;
+    const num = parseInt(aCounter, 10);
+    if (aCounter.trim() && (isNaN(num) || num < 1)) {
+      Alert.alert('Invalid Counter', 'Counter must be a number ≥ 1'); return;
+    }
+    setSaving(true);
+    const body: Record<string, unknown> = { assigned_services: aServices };
+    body.counter_number = aCounter.trim() ? num : null;
+
+    const { error } = await api.patch(`/accounts/employees/${assignTarget.id}/`, body);
+    setSaving(false);
+    if (error) { Alert.alert('Error', error); return; }
+    setAssignModal(false);
+    fetchAll(true);
   };
 
   // ─────────────────────────────────────────────────────────────────────────
+
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={s.container} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
 
-      {/* ── Header ─────────────────────────────────────────── */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/admin/dashboard' as any)}
-          style={styles.backButton}
-        >
-          <MaterialIcons name="arrow-back" size={16} color="#64748b" />
-          <Text style={styles.backText}>Back</Text>
+      {/* Header */}
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => router.replace('/admin/dashboard' as any)} style={s.backBtn}>
+          <MaterialIcons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
-
-        <View style={styles.headerRow}>
-          <View style={styles.headerTitles}>
-            <Text style={styles.title}>Employees</Text>
-            <Text style={styles.subtitle}>Manage staff across all industries</Text>
-          </View>
-          <TouchableOpacity style={styles.addButton} onPress={openModal} activeOpacity={0.8}>
-            <MaterialIcons name="person-add" size={16} color="#fff" />
-            <Text style={styles.addButtonText}>Add Employee</Text>
-          </TouchableOpacity>
+        <View style={{ flex: 1, marginLeft: 12 }}>
+          <Text style={s.headerTitle}>Employees</Text>
+          <Text style={s.headerSub}>{employees.length} member{employees.length !== 1 ? 's' : ''}</Text>
         </View>
+        <TouchableOpacity style={s.addBtn} onPress={openAdd} activeOpacity={0.8}>
+          <MaterialIcons name="person-add" size={16} color="#fff" />
+          <Text style={s.addBtnText}>Add Staff</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* ── List ───────────────────────────────────────────── */}
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      {/* Role filter */}
+      <View style={s.filterRow}>
+        {(['All', 'staff', 'admin'] as const).map(f => (
+          <TouchableOpacity
+            key={f}
+            style={[s.filterChip, roleFilter === f && s.filterChipActive]}
+            onPress={() => setRoleFilter(f)}
+          >
+            <Text style={[s.filterChipTxt, roleFilter === f && s.filterChipTxtActive]}>
+              {f === 'All' ? 'All' : f === 'staff' ? 'Staff' : 'Admin'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+        <View style={{ flex: 1 }} />
+        <Text style={s.countLabel}>{filtered.length} shown</Text>
+      </View>
 
-        {/* Industry pills */}
+      {/* List */}
+      {loading ? (
+        <View style={s.centered}>
+          <ActivityIndicator size="large" color="#2563eb" />
+          <Text style={s.loadingTxt}>{seeding ? 'Setting up services…' : 'Loading…'}</Text>
+        </View>
+      ) : (
         <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.pillsRow}
-          style={styles.pillsScroll}
+          contentContainerStyle={s.content}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => { setRefreshing(true); fetchAll(true); }}
+              tintColor="#2563eb"
+            />
+          }
         >
-          {INDUSTRIES.map(ind => (
-            <TouchableOpacity
-              key={ind}
-              style={[styles.pill, selectedIndustry === ind && styles.pillActive]}
-              onPress={() => setSelectedIndustry(ind)}
-              activeOpacity={0.75}
-            >
-              <Text style={[styles.pillText, selectedIndustry === ind && styles.pillTextActive]}>{ind}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+          {filtered.length === 0 ? (
+            <View style={s.empty}>
+              <MaterialIcons name="group" size={52} color="#cbd5e1" />
+              <Text style={s.emptyTitle}>No employees found</Text>
+              <Text style={s.emptySub}>Tap "Add Staff" to add your first employee</Text>
+            </View>
+          ) : filtered.map(emp => {
+            const roleStyle = ROLE_STYLE[emp.role] ?? ROLE_STYLE.staff;
+            const empSvcNames = (emp.assigned_services ?? [])
+              .map(id => idToName(id, backendSvcs))
+              .filter(Boolean);
 
-        {/* Working status tabs */}
-        <View style={styles.tabRow}>
-          {WORKING_FILTERS.map(f => (
-            <TouchableOpacity
-              key={f}
-              style={[styles.tab, workingFilter === f && styles.tabActive]}
-              onPress={() => setWorkingFilter(f)}
-              activeOpacity={0.75}
-            >
-              {f !== 'All' && (
-                <View style={[styles.statusDot, { backgroundColor: f === 'Working Now' ? '#059669' : '#94a3b8' }]} />
-              )}
-              <Text style={[styles.tabText, workingFilter === f && styles.tabTextActive]}>{f}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+            return (
+              <View key={emp.id} style={s.card}>
+                {/* Top row */}
+                <View style={s.cardTop}>
+                  <View style={[s.avatar, { backgroundColor: roleStyle.bg }]}>
+                    <Text style={[s.avatarTxt, { color: roleStyle.color }]}>
+                      {(emp.full_name || emp.email).charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.empName}>{emp.full_name || '—'}</Text>
+                    <Text style={s.empEmail}>{emp.email}</Text>
+                  </View>
+                  <TouchableOpacity style={s.deleteBtn} onPress={() => handleDelete(emp)}>
+                    <MaterialIcons name="delete-outline" size={18} color="#be123c" />
+                  </TouchableOpacity>
+                </View>
 
-        {/* Summary row */}
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryText}>
-            Showing <Text style={styles.summaryBold}>{filtered.length}</Text>{' '}
-            {filtered.length === 1 ? 'employee' : 'employees'}
-          </Text>
-          <Text style={styles.summaryMeta}>
-            <Text style={styles.workingCount}>{workingCount} working</Text>
-            {'   '}
-            <Text style={styles.offCount}>{offCount} off</Text>
-          </Text>
-        </View>
+                {/* Badges */}
+                <View style={s.badgeRow}>
+                  <View style={[s.badge, { backgroundColor: roleStyle.bg }]}>
+                    <Text style={[s.badgeTxt, { color: roleStyle.color }]}>{roleStyle.label}</Text>
+                  </View>
+                  {emp.counter_number != null && (
+                    <View style={s.counterBadge}>
+                      <MaterialIcons name="tag" size={11} color="#2563eb" />
+                      <Text style={s.counterTxt}>Counter {emp.counter_number}</Text>
+                    </View>
+                  )}
+                  {!!emp.phone && emp.phone !== '0000000000' && (
+                    <View style={s.phoneBadge}>
+                      <MaterialIcons name="phone" size={11} color="#64748b" />
+                      <Text style={s.phoneTxt}>{emp.phone}</Text>
+                    </View>
+                  )}
+                </View>
 
-        {/* Employee cards */}
-        {filtered.map(emp => {
-          const indStyle  = INDUSTRY_COLORS[emp.industry] ?? { color: '#475569', bg: '#f1f5f9' };
-          const isWorking = emp.workingStatus === 'Working Now';
+                {/* Assigned services */}
+                {empSvcNames.length > 0 && (
+                  <View style={s.servicesRow}>
+                    <MaterialIcons name="room-service" size={12} color="#94a3b8" />
+                    <View style={s.serviceTagsWrap}>
+                      {empSvcNames.map(n => (
+                        <View key={n} style={s.svcTag}>
+                          <Text style={s.svcTagTxt}>{n}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
 
-          return (
-            <View key={emp.id} style={styles.card}>
-              {/* Top row */}
-              <View style={styles.cardTop}>
-                <View style={[styles.avatar, { backgroundColor: indStyle.bg }]}>
-                  <Text style={[styles.avatarText, { color: indStyle.color }]}>
-                    {emp.name.charAt(0).toUpperCase()}
+                {/* Assign / Edit button */}
+                <TouchableOpacity style={s.assignBtn} onPress={() => openAssign(emp)} activeOpacity={0.8}>
+                  <MaterialIcons name="edit" size={13} color="#2563eb" />
+                  <Text style={s.assignBtnTxt}>
+                    {emp.counter_number == null && empSvcNames.length === 0
+                      ? 'Assign Counter & Services'
+                      : 'Edit Assignment'}
                   </Text>
-                </View>
-                <View style={styles.cardTopInfo}>
-                  <Text style={styles.empName}>{emp.name}</Text>
-                  <Text style={styles.empEmail}>{emp.email}</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.deleteBtn}
-                  onPress={() => handleDelete(emp.id)}
-                  activeOpacity={0.7}
-                >
-                  <MaterialIcons name="delete-outline" size={18} color="#be123c" />
                 </TouchableOpacity>
               </View>
+            );
+          })}
 
-              {/* Pill tags */}
-              <View style={styles.pillTagRow}>
-                <View style={styles.rolePill}>
-                  <Text style={styles.rolePillText}>{emp.role}</Text>
-                </View>
-                <View style={[styles.industryPill, { backgroundColor: indStyle.bg }]}>
-                  <Text style={[styles.industryPillText, { color: indStyle.color }]}>{emp.industry}</Text>
-                </View>
-              </View>
-
-              {/* Meta row */}
-              <View style={styles.cardMeta}>
-                <View style={styles.metaItem}>
-                  <MaterialIcons name="tag" size={13} color="#94a3b8" />
-                  <Text style={styles.metaText}>Counter {emp.counter}</Text>
-                </View>
-                <View style={styles.metaItem}>
-                  <View style={[styles.statusDotSmall, { backgroundColor: isWorking ? '#059669' : '#94a3b8' }]} />
-                  <Text style={[styles.workingLabel, { color: isWorking ? '#059669' : '#94a3b8' }]}>
-                    {emp.workingStatus}
-                  </Text>
-                </View>
-                <View style={styles.metaSpacer} />
-                <View style={[styles.statusPill, { backgroundColor: emp.status === 'Active' ? '#ecfdf5' : '#fff1f2' }]}>
-                  <Text style={[styles.statusPillText, { color: emp.status === 'Active' ? '#059669' : '#be123c' }]}>
-                    {emp.status}
-                  </Text>
-                </View>
-              </View>
-            </View>
-          );
-        })}
-
-        {filtered.length === 0 && (
-          <View style={styles.emptyState}>
-            <MaterialIcons name="group" size={44} color="#e2e8f0" />
-            <Text style={styles.emptyText}>No employees match these filters.</Text>
-          </View>
-        )}
-
-        <View style={{ height: 24 }} />
-      </ScrollView>
+          <View style={{ height: 20 }} />
+        </ScrollView>
+      )}
 
       <BottomNav />
 
       {/* ── Add Employee Modal ──────────────────────────────── */}
-      <Modal
-        visible={modalVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.overlay}>
-          <TouchableOpacity style={styles.overlayDismiss} onPress={() => setModalVisible(false)} activeOpacity={1} />
+      <Modal visible={addModal} animationType="slide" transparent onRequestClose={() => setAddModal(false)}>
+        <View style={s.overlay}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setAddModal(false)} />
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-            <View style={styles.sheet}>
-
-              {/* Sheet header */}
-              <View style={styles.sheetHeader}>
+            <View style={s.sheet}>
+              <View style={s.sheetHead}>
                 <View>
-                  <Text style={styles.sheetTitle}>Add New Employee</Text>
-                  <Text style={styles.sheetSubtitle}>Fill in all required fields</Text>
+                  <Text style={s.sheetTitle}>Add Employee</Text>
+                  <Text style={s.sheetSub}>Default password: changeme</Text>
                 </View>
-                <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeBtn}>
+                <TouchableOpacity onPress={() => setAddModal(false)} style={s.closeBtn}>
                   <MaterialIcons name="close" size={20} color="#64748b" />
                 </TouchableOpacity>
               </View>
 
-              <ScrollView
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.sheetBody}
-                keyboardShouldPersistTaps="handled"
-              >
-                <FormField
-                  label="Full Name *"
-                  value={fName}
-                  onChangeText={v => { setFName(v); setErrors(e => ({ ...e, name: '' })); }}
-                  placeholder="e.g. John Smith"
-                  error={errors.name}
-                />
+              <ScrollView contentContainerStyle={s.sheetBody} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                <View style={s.field}>
+                  <Text style={s.fieldLbl}>Full Name *</Text>
+                  <TextInput
+                    style={[s.input, fErrors.name && s.inputErr]}
+                    placeholder="e.g. Seyi Andrew"
+                    placeholderTextColor="#94a3b8"
+                    value={fName}
+                    onChangeText={v => { setFName(v); setFErrors(p => ({ ...p, name: '' })); }}
+                    autoCapitalize="words"
+                  />
+                  {!!fErrors.name && <Text style={s.errTxt}>{fErrors.name}</Text>}
+                </View>
 
-                <FormField
-                  label="Email Address *"
-                  value={fEmail}
-                  onChangeText={v => { setFEmail(v); setErrors(e => ({ ...e, email: '' })); }}
-                  placeholder="e.g. john@company.com"
-                  error={errors.email}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                />
+                <View style={s.field}>
+                  <Text style={s.fieldLbl}>Email Address *</Text>
+                  <TextInput
+                    style={[s.input, fErrors.email && s.inputErr]}
+                    placeholder="e.g. staff@company.com"
+                    placeholderTextColor="#94a3b8"
+                    value={fEmail}
+                    onChangeText={v => { setFEmail(v); setFErrors(p => ({ ...p, email: '' })); }}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                  />
+                  {!!fErrors.email && <Text style={s.errTxt}>{fErrors.email}</Text>}
+                </View>
 
-                <FormField
-                  label="Role / Job Title *"
-                  value={fRole}
-                  onChangeText={v => { setFRole(v); setErrors(e => ({ ...e, role: '' })); }}
-                  placeholder="e.g. Teller, Receptionist, Nurse"
-                  error={errors.role}
-                />
+                <View style={s.field}>
+                  <Text style={s.fieldLbl}>Phone (optional)</Text>
+                  <TextInput
+                    style={s.input}
+                    placeholder="e.g. +1 555 000 0000"
+                    placeholderTextColor="#94a3b8"
+                    value={fPhone}
+                    onChangeText={v => setFPhone(v.replace(/[^0-9]/g, '').slice(0, 10))}
+                    keyboardType="phone-pad"
+                  />
+                </View>
 
-                <FormField
-                  label="Counter Number *"
-                  value={fCounter}
-                  onChangeText={v => { setFCounter(v); setErrors(e => ({ ...e, counter: '' })); }}
-                  placeholder="e.g. 3"
-                  error={errors.counter}
-                  keyboardType="numeric"
-                />
-
-                {/* Industry */}
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Industry</Text>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.selectorRow}
-                    keyboardShouldPersistTaps="handled"
-                  >
-                    {INDUSTRY_LIST.map(ind => (
+                <View style={s.field}>
+                  <Text style={s.fieldLbl}>Role</Text>
+                  <View style={s.toggleRow}>
+                    {(['staff', 'admin'] as const).map(r => (
                       <TouchableOpacity
-                        key={ind}
-                        style={[styles.selectorPill, fIndustry === ind && styles.selectorPillActive]}
-                        onPress={() => setFIndustry(ind)}
-                        activeOpacity={0.75}
+                        key={r}
+                        style={[s.toggleBtn, fRole === r && s.toggleBtnActive]}
+                        onPress={() => setFRole(r)}
                       >
-                        <Text style={[styles.selectorPillText, fIndustry === ind && styles.selectorPillTextActive]}>
-                          {ind}
+                        <Text style={[s.toggleTxt, fRole === r && s.toggleTxtActive]}>
+                          {r === 'staff' ? 'Staff' : 'Admin'}
                         </Text>
                       </TouchableOpacity>
                     ))}
-                  </ScrollView>
-                </View>
-
-                {/* Working Status */}
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Working Status</Text>
-                  <View style={styles.toggleRow}>
-                    {(['Working Now', 'Off Duty'] as WorkingStatus[]).map(ws => (
-                      <TouchableOpacity
-                        key={ws}
-                        style={[styles.toggleBtn, fWorkingStatus === ws && styles.toggleBtnActive]}
-                        onPress={() => setFWorkingStatus(ws)}
-                        activeOpacity={0.75}
-                      >
-                        <View style={[styles.toggleDot, { backgroundColor: ws === 'Working Now' ? '#059669' : '#94a3b8' }]} />
-                        <Text style={[styles.toggleText, fWorkingStatus === ws && styles.toggleTextActive]}>{ws}</Text>
-                      </TouchableOpacity>
-                    ))}
                   </View>
                 </View>
 
-                {/* Employee Status */}
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Employee Status</Text>
-                  <View style={styles.toggleRow}>
-                    {(['Active', 'Inactive'] as EmployeeStatus[]).map(s => (
-                      <TouchableOpacity
-                        key={s}
-                        style={[styles.toggleBtn, fEmpStatus === s && styles.toggleBtnActive]}
-                        onPress={() => setFEmpStatus(s)}
-                        activeOpacity={0.75}
-                      >
-                        <Text style={[styles.toggleText, fEmpStatus === s && styles.toggleTextActive]}>{s}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
+                <View style={s.field}>
+                  <Text style={s.fieldLbl}>Counter Number (optional)</Text>
+                  <TextInput
+                    style={[s.input, fErrors.counter && s.inputErr]}
+                    placeholder="e.g. 1"
+                    placeholderTextColor="#94a3b8"
+                    value={fCounter}
+                    onChangeText={v => { setFCounter(v); setFErrors(p => ({ ...p, counter: '' })); }}
+                    keyboardType="numeric"
+                  />
+                  {!!fErrors.counter && <Text style={s.errTxt}>{fErrors.counter}</Text>}
                 </View>
 
-                {/* Submit */}
-                <TouchableOpacity style={styles.submitBtn} onPress={handleAdd} activeOpacity={0.85}>
-                  <MaterialIcons name="person-add" size={18} color="#fff" />
-                  <Text style={styles.submitBtnText}>Add Employee</Text>
+                <View style={s.field}>
+                  <View style={s.fieldLblRow}>
+                    <Text style={s.fieldLbl}>Assign Services (optional)</Text>
+                    {fServices.length > 0 && (
+                      <TouchableOpacity onPress={() => setFServices([])}>
+                        <Text style={s.clearTxt}>Clear all</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <ServicePicker
+                    nameMap={nameMap}
+                    selectedIds={fServices}
+                    onToggleId={id => setFServices(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])}
+                    seeding={seeding}
+                  />
+                </View>
+
+                <TouchableOpacity style={[s.submitBtn, adding && { opacity: 0.6 }]} onPress={handleAdd} disabled={adding}>
+                  {adding
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <><MaterialIcons name="person-add" size={18} color="#fff" /><Text style={s.submitBtnTxt}>Add Employee</Text></>
+                  }
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      {/* ── Edit Assignment Modal ────────────────────────────── */}
+      <Modal visible={assignModal} animationType="slide" transparent onRequestClose={() => setAssignModal(false)}>
+        <View style={s.overlay}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setAssignModal(false)} />
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+            <View style={s.sheet}>
+              <View style={s.sheetHead}>
+                <View style={{ flex: 1, marginRight: 12 }}>
+                  <Text style={s.sheetTitle} numberOfLines={1}>
+                    Edit — {assignTarget?.full_name || assignTarget?.email}
+                  </Text>
+                  <Text style={s.sheetSub}>Update counter and service assignments</Text>
+                </View>
+                <TouchableOpacity onPress={() => setAssignModal(false)} style={s.closeBtn}>
+                  <MaterialIcons name="close" size={20} color="#64748b" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView contentContainerStyle={s.sheetBody} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                <View style={s.field}>
+                  <Text style={s.fieldLbl}>Counter Number</Text>
+                  <TextInput
+                    style={s.input}
+                    placeholder="e.g. 1  (leave blank to unassign)"
+                    placeholderTextColor="#94a3b8"
+                    value={aCounter}
+                    onChangeText={setACounter}
+                    keyboardType="numeric"
+                  />
+                </View>
+
+                <View style={s.field}>
+                  <View style={s.fieldLblRow}>
+                    <Text style={s.fieldLbl}>Allowed Services</Text>
+                    <View style={s.selectionRow}>
+                      <TouchableOpacity onPress={() => {
+                        const allIds = backendSvcs.map(sv => sv.id);
+                        setAServices(allIds);
+                      }}>
+                        <Text style={s.selectAllTxt}>Select all</Text>
+                      </TouchableOpacity>
+                      <Text style={s.sepDot}>·</Text>
+                      <TouchableOpacity onPress={() => setAServices([])}>
+                        <Text style={s.clearTxt}>Clear</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <ServicePicker
+                    nameMap={nameMap}
+                    selectedIds={aServices}
+                    onToggleId={id => setAServices(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])}
+                    seeding={seeding}
+                  />
+                </View>
+
+                <TouchableOpacity style={[s.submitBtn, saving && { opacity: 0.6 }]} onPress={handleSaveAssign} disabled={saving}>
+                  {saving
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <><MaterialIcons name="save" size={18} color="#fff" /><Text style={s.submitBtnTxt}>Save Changes</Text></>
+                  }
                 </TouchableOpacity>
               </ScrollView>
             </View>
@@ -466,136 +704,164 @@ export default function EmployeeManagement() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
+
+const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
 
-  // Header
   header: {
-    backgroundColor: '#fff',
-    paddingTop: 16, paddingBottom: 14, paddingHorizontal: 20,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 14,
     borderBottomWidth: 1, borderBottomColor: '#e2e8f0',
   },
-  backButton: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12, alignSelf: 'flex-start' },
-  backText: { color: '#64748b', fontSize: 14, fontWeight: '700' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  headerTitles: { flex: 1 },
-  title: { fontSize: 24, fontWeight: '900', color: '#0f172a', letterSpacing: -0.5 },
-  subtitle: { fontSize: 12, color: '#64748b', marginTop: 3 },
-  addButton: {
+  backBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: 20, fontWeight: '900', color: '#0f172a' },
+  headerSub: { fontSize: 12, color: '#64748b', fontWeight: '500', marginTop: 1 },
+  addBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#2563eb', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12,
+    backgroundColor: '#2563eb', paddingHorizontal: 14, paddingVertical: 9, borderRadius: 12,
   },
-  addButtonText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  addBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
-  content: { paddingBottom: 40 },
-
-  // Industry pills
-  pillsScroll: { marginTop: 14, marginBottom: 4 },
-  pillsRow: { paddingHorizontal: 20, gap: 8 },
-  pill: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999, backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0' },
-  pillActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-  pillText: { fontSize: 12, fontWeight: '700', color: '#475569' },
-  pillTextActive: { color: '#fff' },
-
-  // Working status tabs
-  tabRow: {
-    flexDirection: 'row', marginHorizontal: 20, marginTop: 14, marginBottom: 14,
-    backgroundColor: '#f1f5f9', borderRadius: 14, padding: 4, gap: 4,
+  filterRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 16, paddingVertical: 10,
+    backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
   },
-  tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 8, borderRadius: 10 },
-  tabActive: { backgroundColor: '#fff', shadowColor: '#0f172a', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4, elevation: 2 },
-  tabText: { fontSize: 12, fontWeight: '700', color: '#94a3b8' },
-  tabTextActive: { color: '#0f172a' },
-  statusDot: { width: 7, height: 7, borderRadius: 999 },
+  filterChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999, backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0' },
+  filterChipActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
+  filterChipTxt: { fontSize: 12, fontWeight: '700', color: '#475569' },
+  filterChipTxtActive: { color: '#fff' },
+  countLabel: { fontSize: 12, color: '#94a3b8', fontWeight: '600' },
 
-  // Summary
-  summaryRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, marginBottom: 12 },
-  summaryText: { fontSize: 13, fontWeight: '500', color: '#64748b' },
-  summaryBold: { fontWeight: '900', color: '#0f172a' },
-  summaryMeta: { fontSize: 12 },
-  workingCount: { color: '#059669', fontWeight: '700' },
-  offCount: { color: '#94a3b8', fontWeight: '700' },
+  content: { padding: 16, gap: 12, paddingBottom: 40 },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  loadingTxt: { fontSize: 14, color: '#94a3b8', fontWeight: '500' },
 
-  // Employee cards
+  empty: { alignItems: 'center', paddingVertical: 60, gap: 10 },
+  emptyTitle: { fontSize: 16, fontWeight: '700', color: '#64748b' },
+  emptySub: { fontSize: 13, color: '#94a3b8', textAlign: 'center' },
+
   card: {
-    backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0',
-    borderRadius: 20, padding: 16, marginHorizontal: 20, marginBottom: 10, gap: 10,
+    backgroundColor: '#fff', borderRadius: 18, borderWidth: 1,
+    borderColor: '#e2e8f0', padding: 16, gap: 10,
+    shadowColor: '#0f172a', shadowOpacity: 0.03, shadowRadius: 4, elevation: 1,
   },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   avatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontSize: 18, fontWeight: '900' },
-  cardTopInfo: { flex: 1 },
-  empName: { fontSize: 14, fontWeight: '900', color: '#0f172a' },
-  empEmail: { fontSize: 12, fontWeight: '500', color: '#64748b', marginTop: 2 },
-  deleteBtn: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#fff1f2', borderWidth: 1, borderColor: '#ffe4e6', alignItems: 'center', justifyContent: 'center' },
+  avatarTxt: { fontSize: 18, fontWeight: '900' },
+  empName: { fontSize: 15, fontWeight: '800', color: '#0f172a' },
+  empEmail: { fontSize: 12, color: '#64748b', fontWeight: '500', marginTop: 1 },
+  deleteBtn: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#fff1f2', alignItems: 'center', justifyContent: 'center' },
 
-  pillTagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  rolePill: { backgroundColor: '#f1f5f9', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
-  rolePillText: { fontSize: 11, fontWeight: '700', color: '#334155' },
-  industryPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
-  industryPillText: { fontSize: 11, fontWeight: '700' },
+  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  badgeTxt: { fontSize: 11, fontWeight: '700' },
+  counterBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: '#eff6ff', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999,
+  },
+  counterTxt: { fontSize: 11, fontWeight: '700', color: '#2563eb' },
+  phoneBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: '#f1f5f9', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999,
+  },
+  phoneTxt: { fontSize: 11, fontWeight: '600', color: '#64748b' },
 
-  cardMeta: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#f1f5f9' },
-  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  metaText: { fontSize: 12, fontWeight: '600', color: '#64748b' },
-  metaSpacer: { flex: 1 },
-  statusDotSmall: { width: 7, height: 7, borderRadius: 999 },
-  workingLabel: { fontSize: 12, fontWeight: '700' },
-  statusPill: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 },
-  statusPillText: { fontSize: 11, fontWeight: '700' },
+  servicesRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
+  serviceTagsWrap: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
+  svcTag: { backgroundColor: '#ecfdf5', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
+  svcTagTxt: { fontSize: 10, fontWeight: '700', color: '#059669' },
 
-  emptyState: { alignItems: 'center', paddingVertical: 52, gap: 12 },
-  emptyText: { fontSize: 14, fontWeight: '500', color: '#94a3b8' },
+  assignBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    borderWidth: 1.5, borderColor: '#bfdbfe', borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 9, backgroundColor: '#eff6ff',
+  },
+  assignBtnTxt: { fontSize: 13, fontWeight: '700', color: '#2563eb' },
 
   // Modal
   overlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.5)', justifyContent: 'flex-end' },
-  overlayDismiss: { flex: 1 },
   sheet: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    maxHeight: '90%',
-    paddingBottom: Platform.OS === 'ios' ? 32 : 20,
+    backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    maxHeight: '92%', paddingBottom: Platform.OS === 'ios' ? 32 : 20,
   },
-  sheetHeader: {
+  sheetHead: {
     flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
     padding: 20, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
   },
-  sheetTitle: { fontSize: 20, fontWeight: '900', color: '#0f172a' },
-  sheetSubtitle: { fontSize: 13, color: '#64748b', marginTop: 2 },
-  closeBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' },
+  sheetTitle: { fontSize: 18, fontWeight: '900', color: '#0f172a' },
+  sheetSub: { fontSize: 12, color: '#64748b', marginTop: 3 },
+  closeBtn: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' },
   sheetBody: { padding: 20, gap: 16, paddingBottom: 12 },
 
-  // Form fields
-  fieldGroup: { gap: 6 },
-  fieldLabel: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
+  field: { gap: 6 },
+  fieldLblRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  fieldLbl: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
+  selectionRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  selectAllTxt: { fontSize: 12, fontWeight: '700', color: '#2563eb' },
+  clearTxt: { fontSize: 12, fontWeight: '700', color: '#e11d48' },
+  sepDot: { fontSize: 12, color: '#94a3b8' },
+
   input: {
     borderWidth: 1.5, borderColor: '#e2e8f0', borderRadius: 14,
     paddingHorizontal: 14, paddingVertical: 13,
     fontSize: 14, color: '#0f172a', backgroundColor: '#f8fafc',
   },
-  inputError: { borderColor: '#e11d48', backgroundColor: '#fff8f8' },
-  errorText: { fontSize: 11, color: '#e11d48', fontWeight: '600' },
-
-  selectorRow: { gap: 8, paddingVertical: 2 },
-  selectorPill: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: '#f1f5f9', borderWidth: 1.5, borderColor: '#e2e8f0' },
-  selectorPillActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-  selectorPillText: { fontSize: 12, fontWeight: '700', color: '#475569' },
-  selectorPillTextActive: { color: '#fff' },
+  inputErr: { borderColor: '#e11d48', backgroundColor: '#fff8f8' },
+  errTxt: { fontSize: 11, color: '#e11d48', fontWeight: '600' },
 
   toggleRow: { flexDirection: 'row', gap: 10 },
   toggleBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    paddingVertical: 11, borderRadius: 12, backgroundColor: '#f1f5f9',
-    borderWidth: 1.5, borderColor: '#e2e8f0',
+    flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 12,
+    backgroundColor: '#f1f5f9', borderWidth: 1.5, borderColor: '#e2e8f0',
   },
   toggleBtnActive: { backgroundColor: '#eff6ff', borderColor: '#2563eb' },
-  toggleDot: { width: 8, height: 8, borderRadius: 999 },
-  toggleText: { fontSize: 13, fontWeight: '700', color: '#94a3b8' },
-  toggleTextActive: { color: '#2563eb' },
+  toggleTxt: { fontSize: 13, fontWeight: '700', color: '#94a3b8' },
+  toggleTxtActive: { color: '#2563eb' },
+
+  // Service picker
+  seedingBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#f8fafc', borderRadius: 12, padding: 14,
+    borderWidth: 1, borderColor: '#e2e8f0',
+  },
+  seedingTxt: { fontSize: 13, color: '#94a3b8', fontWeight: '500' },
+
+  industryList: { gap: 8 },
+  industryCard: { borderRadius: 14, overflow: 'hidden' },
+  industryHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    padding: 12, backgroundColor: '#fff',
+    borderWidth: 1.5, borderRadius: 14,
+  },
+  industryIcon: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  industryLabel: { fontSize: 13, fontWeight: '800' },
+  industrySub: { fontSize: 11, color: '#94a3b8', fontWeight: '500', marginTop: 2 },
+  industryBadge: {
+    minWidth: 24, height: 24, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6,
+  },
+  industryBadgeTxt: { fontSize: 12, fontWeight: '800' },
+
+  serviceSubList: { gap: 4, paddingTop: 6, paddingHorizontal: 4, paddingBottom: 4 },
+  svcRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    padding: 11, borderRadius: 10,
+    borderWidth: 1.5, borderColor: '#e2e8f0', backgroundColor: '#f8fafc',
+  },
+  svcRowDisabled: { opacity: 0.4 },
+  checkbox: {
+    width: 22, height: 22, borderRadius: 6,
+    borderWidth: 2, borderColor: '#cbd5e1',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  checkboxDisabled: { borderColor: '#e2e8f0', backgroundColor: '#f1f5f9' },
+  svcName: { fontSize: 13, fontWeight: '600', color: '#0f172a' },
+  svcNotReady: { fontSize: 10, color: '#94a3b8', fontWeight: '500', marginTop: 1 },
 
   submitBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    backgroundColor: '#2563eb', paddingVertical: 15, borderRadius: 16, marginTop: 4,
+    backgroundColor: '#2563eb', borderRadius: 14, paddingVertical: 14, marginTop: 4,
   },
-  submitBtnText: { fontSize: 15, fontWeight: '800', color: '#fff' },
+  submitBtnTxt: { fontSize: 15, fontWeight: '800', color: '#fff' },
 });

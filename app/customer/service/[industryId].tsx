@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, StatusBar,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  StatusBar, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppContext } from '@/context/AppContext';
+import { api } from '@/lib/api';
+import BottomNav from '@/components/BottomNav';
 
 type IconName = React.ComponentProps<typeof MaterialIcons>['name'];
 type Step = 'service' | 'branch' | 'action';
@@ -15,10 +18,6 @@ type Branch  = { id: string; name: string; address: string; waitTime: number; qu
 
 // ─── Static data ──────────────────────────────────────────────────────────────
 
-const TICKET_PREFIX: Record<string, string> = {
-  banking: 'BNK', healthcare: 'HLT', retail: 'RTL',
-  government: 'GOV', education: 'EDU', corporate: 'CRP',
-};
 
 const INDUSTRY_META: Record<string, { label: string; icon: IconName; color: string; bg: string }> = {
   banking:    { label: 'Banking & Finance',  icon: 'account-balance', color: '#2563eb', bg: '#eff6ff' },
@@ -103,13 +102,28 @@ const BRANCHES: Record<string, Branch[]> = {
   ],
 };
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type QueueTicketResponse = {
+  id: number;
+  ticket_number: string;
+  service_name: string;
+  branch_name: string;
+  status: 'waiting' | 'serving' | 'completed' | 'cancelled';
+  position: number;
+  estimated_wait: number;
+  issued_at: string;
+  ahead_tickets: string[];
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function now12h() {
-  const d = new Date();
-  const h = d.getHours() % 12 || 12;
+function fmt12h(iso: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const h = d.getHours();
   const m = String(d.getMinutes()).padStart(2, '0');
-  return `${h}:${m} ${d.getHours() >= 12 ? 'PM' : 'AM'}`;
+  return `${h > 12 ? h - 12 : h === 0 ? 12 : h}:${m} ${h >= 12 ? 'PM' : 'AM'}`;
 }
 
 function loadInfo(q: number) {
@@ -131,11 +145,11 @@ export default function CustomerServiceList() {
   const meta     = INDUSTRY_META[id] ?? INDUSTRY_META.banking;
   const services = SERVICES[id] ?? SERVICES.banking;
   const branches = BRANCHES[id] ?? BRANCHES.banking;
-  const prefix   = TICKET_PREFIX[id] ?? 'TKT';
 
   const [step,    setStep]    = useState<Step>('service');
   const [service, setService] = useState<Service | null>(null);
   const [branch,  setBranch]  = useState<Branch | null>(null);
+  const [joining, setJoining] = useState(false);
 
   const stepIndex = STEPS.indexOf(step);
 
@@ -149,19 +163,37 @@ export default function CustomerServiceList() {
     }
   };
 
-  const handleJoinQueue = () => {
-    if (!service || !branch) return;
-    const num = `${prefix}-${String(Math.floor(Math.random() * 900) + 100)}`;
-    setActiveTicket({
-      ticketNumber: num,
-      service: service.name,
-      industry: meta.label,
-      branch: branch.name,
-      waitTime: branch.waitTime,
-      peopleAhead: branch.queue,
-      issuedAt: now12h(),
-      status: 'waiting',
+  const handleJoinQueue = async () => {
+    if (!service || !branch || joining) return;
+    setJoining(true);
+
+    const { data, error } = await api.post<QueueTicketResponse>('/queues/join/', {
+      service_name: service.name,
+      branch_name:  branch.name,
+      industry:     id,
+      estimated_time: service.waitTime,
     });
+
+    setJoining(false);
+
+    if (error || !data) {
+      Alert.alert('Could not join queue', error ?? 'Please try again.');
+      return;
+    }
+
+    setActiveTicket({
+      ticketId:     data.id,
+      ticketNumber: data.ticket_number,
+      service:      data.service_name,
+      industry:     meta.label,
+      branch:       data.branch_name,
+      waitTime:     data.estimated_wait,
+      peopleAhead:  Math.max(0, data.position - 1),
+      issuedAt:     fmt12h(data.issued_at),
+      status:       data.status === 'cancelled' ? 'completed' : data.status,
+      aheadTickets: data.ahead_tickets,
+    });
+
     router.push('/customer/ticket' as any);
   };
 
@@ -320,15 +352,25 @@ export default function CustomerServiceList() {
             <Text style={s.sectionLabel}>Choose how to proceed</Text>
 
             {/* Join Queue */}
-            <TouchableOpacity style={s.actionCard} onPress={handleJoinQueue} activeOpacity={0.85}>
+            <TouchableOpacity
+              style={[s.actionCard, joining && { opacity: 0.7 }]}
+              onPress={handleJoinQueue}
+              activeOpacity={0.85}
+              disabled={joining}
+            >
               <View style={[s.actionIconWrap, { backgroundColor: '#eff6ff' }]}>
-                <MaterialIcons name="queue" size={30} color="#2563eb" />
+                {joining
+                  ? <ActivityIndicator size="small" color="#2563eb" />
+                  : <MaterialIcons name="queue" size={30} color="#2563eb" />
+                }
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={[s.actionTitle, { color: '#2563eb' }]}>Join Queue</Text>
+                <Text style={[s.actionTitle, { color: '#2563eb' }]}>
+                  {joining ? 'Joining Queue…' : 'Join Queue'}
+                </Text>
                 <Text style={s.actionDesc}>Get a virtual ticket and wait your turn. You'll be notified when it's your time.</Text>
               </View>
-              <MaterialIcons name="chevron-right" size={22} color="#2563eb" />
+              {!joining && <MaterialIcons name="chevron-right" size={22} color="#2563eb" />}
             </TouchableOpacity>
 
             {/* Book Appointment */}
@@ -349,6 +391,7 @@ export default function CustomerServiceList() {
           </>
         )}
       </ScrollView>
+      <BottomNav />
     </SafeAreaView>
   );
 }

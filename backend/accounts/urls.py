@@ -4,6 +4,7 @@ from .views import (
     RegisterView, LoginView, LogoutView, MeView,
     VerifyEmailView, ResendOTPView,
     EmployeeListCreateView, EmployeeDetailView,
+    MyCounterView,
 )
 
 urlpatterns = [
@@ -16,6 +17,8 @@ urlpatterns = [
     # Email verification
     path('verify-email/', VerifyEmailView.as_view(),  name='verify-email'),
     path('resend-otp/',   ResendOTPView.as_view(),    name='resend-otp'),
+    # Counter assignment info for staff
+    path('my-counter/',          MyCounterView.as_view(),          name='my-counter'),
     # Employee management
     path('employees/',           EmployeeListCreateView.as_view(), name='employee-list'),
     path('employees/<int:pk>/',  EmployeeDetailView.as_view(),     name='employee-detail'),
