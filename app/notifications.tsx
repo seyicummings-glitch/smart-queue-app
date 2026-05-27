@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useAppContext } from '@/context/AppContext';
+import { useNotifications } from '@/context/NotificationContext';
 import SQMSHeader from '@/components/SQMSHeader';
 import BottomNav from '@/components/BottomNav';
 import { api } from '@/lib/api';
@@ -82,6 +82,7 @@ export default function NotificationsScreen() {
   const [tab,    setTab]    = useState<'all' | 'unread'>('all');
   const [items,  setItems]  = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
+  const { setUnreadCount } = useNotifications();
 
   const loadNotifications = useCallback(async () => {
     const { data, error } = await api.get<{ results: Notification[] } | Notification[]>('/notifications/');
@@ -92,7 +93,10 @@ export default function NotificationsScreen() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { loadNotifications(); }, [loadNotifications]);
+  useEffect(() => {
+    loadNotifications();
+    setUnreadCount(0);
+  }, [loadNotifications]);
 
   const handleRead = async (id: number) => {
     await api.post(`/notifications/${id}/read/`, {});

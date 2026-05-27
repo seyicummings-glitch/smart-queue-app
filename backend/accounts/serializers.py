@@ -4,14 +4,26 @@ from .models import User
 
 
 class UserSerializer(serializers.ModelSerializer):
-    business = serializers.SerializerMethodField()
+    business                = serializers.SerializerMethodField()
+    assigned_branch_name    = serializers.SerializerMethodField()
+    assigned_services_names = serializers.SerializerMethodField()
 
     def get_business(self, obj):
-        return obj.business_id  # raw FK integer — avoids DoesNotExist if business was deleted
+        return obj.business_id
+
+    def get_assigned_branch_name(self, obj):
+        return obj.assigned_branch.name if obj.assigned_branch else None
+
+    def get_assigned_services_names(self, obj):
+        return list(obj.assigned_services.values_list('name', flat=True))
 
     class Meta:
         model  = User
-        fields = ('id', 'email', 'full_name', 'role', 'phone', 'date_of_birth', 'business', 'email_verified', 'created_at')
+        fields = (
+            'id', 'email', 'full_name', 'role', 'phone', 'date_of_birth',
+            'business', 'email_verified', 'created_at',
+            'counter_number', 'assigned_branch_name', 'assigned_services_names',
+        )
         read_only_fields = ('id', 'email_verified', 'created_at')
 
 
@@ -55,12 +67,24 @@ class EmployeeSerializer(serializers.ModelSerializer):
         required=False,
         queryset=__import__('services.models', fromlist=['Service']).Service.objects.all(),
     )
+    assigned_branch = serializers.PrimaryKeyRelatedField(
+        required=False,
+        allow_null=True,
+        queryset=__import__('branches.models', fromlist=['Branch']).Branch.objects.all(),
+    )
+    assigned_branch_name = serializers.SerializerMethodField(read_only=True)
+
+    def get_assigned_branch_name(self, obj):
+        if obj.assigned_branch:
+            return obj.assigned_branch.name
+        return None
 
     class Meta:
         model  = User
         fields = (
             'id', 'email', 'full_name', 'role', 'phone', 'business',
-            'password', 'counter_number', 'assigned_services', 'created_at',
+            'password', 'counter_number', 'assigned_branch', 'assigned_branch_name',
+            'assigned_services', 'created_at',
         )
         read_only_fields = ('id', 'created_at')
 

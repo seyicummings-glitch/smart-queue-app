@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  StatusBar, Animated, Alert, ActivityIndicator,
+  StatusBar, Animated, ActivityIndicator, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import BottomNav from '@/components/BottomNav';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
+import { useNotifications } from '@/context/NotificationContext';
+import { useAppContext } from '@/context/AppContext';
 import { api } from '@/lib/api';
 
-type TicketStatus = 'waiting' | 'serving' | 'completed' | 'cancelled';
+type TicketStatus = 'waiting' | 'called' | 'serving' | 'completed' | 'cancelled' | 'missed';
 
 type ActiveTicket = {
   id: number;
@@ -23,13 +25,16 @@ type ActiveTicket = {
   called_at: string | null;
   completed_at: string | null;
   ahead_tickets: string[];
+  counter_number: number | null;
 };
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string; icon: React.ComponentProps<typeof MaterialIcons>['name'] }> = {
-  waiting:   { label: 'Waiting',     color: '#2563eb', bg: '#eff6ff', icon: 'schedule'    },
-  serving:   { label: 'Now Serving', color: '#059669', bg: '#ecfdf5', icon: 'person'       },
-  completed: { label: 'Completed',   color: '#64748b', bg: '#f1f5f9', icon: 'check-circle' },
-  cancelled: { label: 'Cancelled',   color: '#e11d48', bg: '#fff1f2', icon: 'cancel'       },
+  waiting:   { label: 'Waiting',     color: '#2563eb', bg: '#eff6ff', icon: 'schedule'              },
+  called:    { label: 'Called!',     color: '#d97706', bg: '#fef3c7', icon: 'notifications-active'  },
+  serving:   { label: 'In Service',  color: '#059669', bg: '#ecfdf5', icon: 'person'                },
+  completed: { label: 'Completed',   color: '#64748b', bg: '#f1f5f9', icon: 'check-circle'          },
+  cancelled: { label: 'Cancelled',   color: '#e11d48', bg: '#fff1f2', icon: 'cancel'                },
+  missed:    { label: 'Missed',      color: '#991b1b', bg: '#fff1f2', icon: 'access-time-filled'    },
 };
 
 function formatIssuedAt(iso: string): string {
@@ -51,20 +56,56 @@ function calcReadyTime(waitMins: number): string {
 
 export default function CustomerQueueStatus() {
   const router = useRouter();
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const pulseAnim   = useRef(new Animated.Value(1)).current;
+  const prevStatus  = useRef<string | null>(null);
+  const { showToast } = useNotifications();
 
-  const [ticket,  setTicket]  = useState<ActiveTicket | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { setActiveTicket } = useAppContext();
+
+  const [ticket,       setTicket]       = useState<ActiveTicket | null>(null);
+  const [loading,      setLoading]      = useState(true);
+  const [leaving,      setLeaving]      = useState(false);
+  const [wasCompleted, setWasCompleted] = useState(false);
 
   const fetchTicket = useCallback(async () => {
     const { data, error } = await api.get<ActiveTicket>('/queues/my-ticket/');
     if (error || !data) {
+      // If we had an active ticket and it's now gone → ticket was completed by staff
+      if (prevStatus.current && !['cancelled', 'missed'].includes(prevStatus.current)) {
+        setWasCompleted(true);
+      }
       setTicket(null);
     } else {
+      // Fire toast on 'called' (urgent) or 'serving'
+      if (data.status === 'called' && prevStatus.current !== 'called') {
+        showToast(
+          "You've been called!",
+          `Ticket ${data.ticket_number} — go to the counter immediately.`,
+          'alert',
+        );
+      } else if (data.status === 'serving' && prevStatus.current !== 'serving') {
+        showToast(
+          "It's your turn!",
+          `Ticket ${data.ticket_number} — please proceed to the counter now.`,
+          'alert',
+        );
+      }
+      prevStatus.current = data.status;
+      setWasCompleted(false);
       setTicket(data);
     }
     setLoading(false);
-  }, []);
+  }, [showToast]);
+
+  // Auto-redirect to home 3 seconds after ticket is completed
+  useEffect(() => {
+    if (!wasCompleted) return;
+    setActiveTicket(null);
+    const timer = setTimeout(() => {
+      router.replace('/customer/home' as any);
+    }, 3_000);
+    return () => clearTimeout(timer);
+  }, [wasCompleted]);
 
   // Initial load + poll every 10 seconds
   useEffect(() => {
@@ -76,7 +117,7 @@ export default function CustomerQueueStatus() {
   // Pulse animation while waiting or serving
   useEffect(() => {
     const status = ticket?.status;
-    if (status === 'waiting' || status === 'serving') {
+    if (status === 'waiting' || status === 'called' || status === 'serving') {
       const loop = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, { toValue: 1.07, duration: 800, useNativeDriver: true }),
@@ -90,17 +131,30 @@ export default function CustomerQueueStatus() {
     }
   }, [ticket?.status]);
 
-  const handleLeave = () => {
+  const handleLeaveQueue = () => {
     if (!ticket) return;
-    Alert.alert('Leave Queue', 'Are you sure? Your ticket will be cancelled.', [
-      { text: 'Stay', style: 'cancel' },
-      { text: 'Leave Queue', style: 'destructive', onPress: async () => {
-        const { error } = await api.post(`/queues/${ticket.id}/cancel/`, {});
-        if (error) { Alert.alert('Error', error); return; }
-        setTicket(null);
-        router.replace('/customer/home' as any);
-      }},
-    ]);
+    Alert.alert(
+      'Leave Queue',
+      `Leave the queue for ${ticket.service_name}? You will lose your position and your ticket will be cancelled.`,
+      [
+        { text: 'Stay', style: 'cancel' },
+        {
+          text: 'Leave Queue',
+          style: 'destructive',
+          onPress: async () => {
+            setLeaving(true);
+            const { error } = await api.post(`/queues/${ticket.id}/cancel/`);
+            setLeaving(false);
+            if (error) {
+              Alert.alert('Error', error);
+            } else {
+              setActiveTicket(null);
+              router.replace('/customer/home' as any);
+            }
+          },
+        },
+      ],
+    );
   };
 
   // ── Loading ───────────────────────────────────────────────────────────────
@@ -109,7 +163,7 @@ export default function CustomerQueueStatus() {
       <SafeAreaView style={styles.emptyContainer}>
         <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/customer/home' as any)} style={styles.backBtn}>
+          <TouchableOpacity onPress={() => router.replace('/customer/home' as any)} style={styles.backBtn}>
             <MaterialIcons name="arrow-back" size={22} color="#0f172a" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Queue Status</Text>
@@ -123,13 +177,33 @@ export default function CustomerQueueStatus() {
     );
   }
 
+  // ── Service completed — auto-redirecting ─────────────────────────────────
+  if (wasCompleted) {
+    return (
+      <SafeAreaView style={styles.emptyContainer}>
+        <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
+        <View style={styles.emptyContent}>
+          <View style={[styles.emptyIconWrap, { backgroundColor: '#f0fdf4' }]}>
+            <MaterialIcons name="check-circle" size={52} color="#059669" />
+          </View>
+          <Text style={styles.emptyTitle}>Service Complete!</Text>
+          <Text style={styles.emptySub}>
+            Your ticket has been attended to.{'\n'}Returning you to home…
+          </Text>
+          <ActivityIndicator color="#059669" style={{ marginTop: 8 }} />
+        </View>
+        <BottomNav />
+      </SafeAreaView>
+    );
+  }
+
   // ── No active ticket ──────────────────────────────────────────────────────
-  if (!ticket || ticket.status === 'cancelled') {
+  if (!ticket || ticket.status === 'cancelled' || ticket.status === 'missed') {
     return (
       <SafeAreaView style={styles.emptyContainer}>
         <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/customer/home' as any)} style={styles.backBtn}>
+          <TouchableOpacity onPress={() => router.replace('/customer/home' as any)} style={styles.backBtn}>
             <MaterialIcons name="arrow-back" size={22} color="#0f172a" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Queue Status</Text>
@@ -168,7 +242,7 @@ export default function CustomerQueueStatus() {
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
 
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/customer/home' as any)} style={styles.backBtn}>
+        <TouchableOpacity onPress={() => router.replace('/customer/home' as any)} style={styles.backBtn}>
           <MaterialIcons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Queue Status</Text>
@@ -207,6 +281,20 @@ export default function CustomerQueueStatus() {
             </View>
           )}
         </View>
+
+        {/* ── Counter banner ────────────────────────────── */}
+        {ticket.counter_number != null && (
+          <View style={styles.counterBanner}>
+            <View style={styles.counterBannerIcon}>
+              <MaterialIcons name="tag" size={18} color="#2563eb" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.counterBannerLabel}>Proceed to Counter</Text>
+              <Text style={styles.counterBannerNum}>Counter #{ticket.counter_number}</Text>
+            </View>
+            <MaterialIcons name="arrow-forward" size={18} color="#2563eb" />
+          </View>
+        )}
 
         {/* ── Stats ─────────────────────────────────────── */}
         {ticket.status !== 'completed' && (
@@ -254,6 +342,17 @@ export default function CustomerQueueStatus() {
           </View>
         )}
 
+        {/* ── Called alert ──────────────────────────────── */}
+        {ticket.status === 'called' && (
+          <View style={[styles.servingCard, { backgroundColor: '#fef3c7', borderColor: '#fbbf24' }]}>
+            <MaterialIcons name="notifications-active" size={32} color="#d97706" />
+            <Text style={[styles.servingTitle, { color: '#92400e' }]}>You've Been Called!</Text>
+            <Text style={[styles.servingDesc, { color: '#b45309' }]}>
+              Please proceed to the counter immediately.{'\n'}Your ticket will expire in 5 minutes.
+            </Text>
+          </View>
+        )}
+
         {/* ── Serving alert ─────────────────────────────── */}
         {ticket.status === 'serving' && (
           <View style={styles.servingCard}>
@@ -296,11 +395,20 @@ export default function CustomerQueueStatus() {
           </View>
         )}
 
-        {/* ── Leave ─────────────────────────────────────── */}
-        {(ticket.status === 'waiting' || ticket.status === 'serving') && (
-          <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave}>
-            <MaterialIcons name="exit-to-app" size={16} color="#e11d48" />
-            <Text style={styles.leaveText}>Leave Queue</Text>
+        {/* ── Leave Queue ───────────────────────────────── */}
+        {(ticket.status === 'waiting' || ticket.status === 'called') && (
+          <TouchableOpacity
+            style={[styles.leaveBtn, leaving && { opacity: 0.6 }]}
+            onPress={handleLeaveQueue}
+            disabled={leaving}
+          >
+            {leaving
+              ? <ActivityIndicator size="small" color="#e11d48" />
+              : <MaterialIcons name="exit-to-app" size={18} color="#e11d48" />
+            }
+            <Text style={styles.leaveText}>
+              {leaving ? 'Leaving…' : 'Leave Queue'}
+            </Text>
           </TouchableOpacity>
         )}
       </ScrollView>
@@ -419,7 +527,20 @@ const styles = StyleSheet.create({
   leaveBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
     paddingVertical: 14, borderRadius: 14,
-    borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fff1f2',
+    borderWidth: 1.5, borderColor: '#fca5a5', backgroundColor: '#fff1f2',
   },
   leaveText: { fontSize: 14, fontWeight: '700', color: '#e11d48' },
+
+  counterBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#eff6ff', borderRadius: 14,
+    borderWidth: 1.5, borderColor: '#bfdbfe',
+    paddingHorizontal: 16, paddingVertical: 14,
+  },
+  counterBannerIcon: {
+    width: 36, height: 36, borderRadius: 10,
+    backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center',
+  },
+  counterBannerLabel: { fontSize: 11, color: '#2563eb', fontWeight: '600' },
+  counterBannerNum:   { fontSize: 16, fontWeight: '900', color: '#1d4ed8' },
 });

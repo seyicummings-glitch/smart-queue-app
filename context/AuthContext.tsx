@@ -14,10 +14,11 @@ import type { User } from '../lib/supabase';   // re-use existing type shape
 type AuthContextType = {
   user:          User | null;
   loading:       boolean;
-  signIn:        (email: string, password: string)                        => Promise<{ error: string | null; role?: string }>;
+  signIn:        (email: string, password: string)                        => Promise<{ error: string | null; role?: string; email_verified?: boolean }>;
   signUp:        (email: string, password: string, fullName: string, phone?: string, dateOfBirth?: string) => Promise<{ error: string | null; role?: string }>;
   signOut:       ()                                                        => Promise<void>;
-  resetPassword: (email: string)                                          => Promise<{ error: string | null }>;
+  resetPassword:        (email: string)                                           => Promise<{ error: string | null }>;
+  confirmPasswordReset: (email: string, otp: string, newPassword: string)        => Promise<{ error: string | null }>;
   updateProfile: (patch: Partial<Pick<User, 'full_name' | 'email'>>)      => Promise<{ error: string | null }>;
   verifyEmail:   (otp: string)                                            => Promise<{ error: string | null }>;
   resendOTP:     ()                                                        => Promise<{ error: string | null }>;
@@ -25,14 +26,17 @@ type AuthContextType = {
 
 // ── Django response shapes ────────────────────────────────────────────────────
 type DjangoUser = {
-  id:             number;
-  email:          string;
-  full_name:      string;
-  role:           string;
-  phone?:         string;
-  business?:      number | null;
-  email_verified: boolean;
-  created_at:     string;
+  id:                      number;
+  email:                   string;
+  full_name:               string;
+  role:                    string;
+  phone?:                  string;
+  business?:               number | null;
+  email_verified:          boolean;
+  created_at:              string;
+  counter_number?:         number | null;
+  assigned_branch_name?:   string | null;
+  assigned_services_names?: string[];
 };
 
 type AuthResponse = {
@@ -43,13 +47,17 @@ type AuthResponse = {
 // Map Django user → our shared User type (keeps id as string for compatibility)
 function toUser(d: DjangoUser): User {
   return {
-    id:          String(d.id),
-    email:       d.email,
-    full_name:   d.full_name,
-    role:        (d.role === 'super_admin' ? 'superadmin' : d.role) as User['role'],
-    business_id: d.business ? String(d.business) : undefined,
-    created_at:  d.created_at,
-    updated_at:  d.created_at,  // Django doesn't always return updated_at
+    id:                      String(d.id),
+    email:                   d.email,
+    full_name:               d.full_name,
+    role:                    (d.role === 'super_admin' ? 'superadmin' : d.role) as User['role'],
+    business_id:             d.business ? String(d.business) : undefined,
+    email_verified:          d.email_verified,
+    created_at:              d.created_at,
+    updated_at:              d.created_at,
+    counter_number:          d.counter_number ?? null,
+    assigned_branch_name:    d.assigned_branch_name ?? null,
+    assigned_services_names: d.assigned_services_names ?? [],
   };
 }
 
@@ -60,7 +68,8 @@ const AuthContext = createContext<AuthContextType>({
   signIn:        async () => ({ error: null }),
   signUp:        async () => ({ error: null }),
   signOut:       async () => {},
-  resetPassword: async () => ({ error: null }),
+  resetPassword:        async () => ({ error: null }),
+  confirmPasswordReset: async () => ({ error: null }),
   updateProfile: async () => ({ error: null }),
   verifyEmail:   async () => ({ error: null }),
   resendOTP:     async () => ({ error: null }),
@@ -105,7 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     await storeTokens(data.tokens.access, data.tokens.refresh);
     setUser(toUser(data.user));
-    return { error: null, role: data.user.role };
+    return { error: null, role: data.user.role, email_verified: data.user.email_verified };
   };
 
   // ── signUp ─────────────────────────────────────────────────────────────────
@@ -141,10 +150,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   // ── resetPassword ──────────────────────────────────────────────────────────
-  const resetPassword = async (_email: string) => {
-    // Django Simple JWT doesn't ship a password-reset flow by default.
-    // Return a friendly message; wire up your own endpoint here when ready.
-    return { error: 'Password reset is not yet available. Please contact support.' };
+  const resetPassword = async (email: string) => {
+    const { error } = await api.post('/accounts/password-reset/', { email }, false);
+    return { error };
+  };
+
+  // ── confirmPasswordReset ───────────────────────────────────────────────────
+  const confirmPasswordReset = async (email: string, otp: string, newPassword: string) => {
+    const { error } = await api.post(
+      '/accounts/password-reset/confirm/',
+      { email, otp, new_password: newPassword },
+      false,
+    );
+    return { error };
   };
 
   // ── updateProfile ──────────────────────────────────────────────────────────
@@ -176,7 +194,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut, resetPassword, updateProfile, verifyEmail, resendOTP }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut, resetPassword, confirmPasswordReset, updateProfile, verifyEmail, resendOTP }}>
       {children}
     </AuthContext.Provider>
   );

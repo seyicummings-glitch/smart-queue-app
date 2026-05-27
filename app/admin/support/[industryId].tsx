@@ -157,7 +157,7 @@ export default function AdminSupportDetail() {
   const slug = Array.isArray(industryId) ? industryId[0] : industryId ?? '';
   const industryLabel = slug
     .split('-')
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ');
 
   return (

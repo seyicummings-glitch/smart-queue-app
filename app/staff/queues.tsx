@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAppContext } from '@/context/AppContext';
+import { useNotifications } from '@/context/NotificationContext';
 import BottomNav from '@/components/BottomNav';
 import { api } from '@/lib/api';
 
@@ -51,12 +52,14 @@ function fmt12h(iso: string): string {
 export default function StaffQueues() {
   const router = useRouter();
   const { role } = useAppContext();
+  const { showToast } = useNotifications();
 
-  const [loading,       setLoading]       = useState(true);
-  const [refresh,       setRefresh]       = useState(false);
-  const [actionLoading, setActionLoading] = useState(false);
-  const [counterNumber, setCounterNumber] = useState<number | null>(null);
-  const [services,      setServices]      = useState<AssignedService[]>([]);
+  const [loading,        setLoading]        = useState(true);
+  const [refresh,        setRefresh]        = useState(false);
+  const [actionLoading,  setActionLoading]  = useState(false);
+  const [counterNumber,  setCounterNumber]  = useState<number | null>(null);
+  const [branchName,     setBranchName]     = useState<string | null>(null);
+  const [services,       setServices]       = useState<AssignedService[]>([]);
   const [selectedId,    setSelectedId]    = useState<number | null>(null);
   const [waitingMap,    setWaitingMap]    = useState<Record<number, Ticket[]>>({});
   const [servingMap,    setServingMap]    = useState<Record<number, Ticket | null>>({});
@@ -66,12 +69,16 @@ export default function StaffQueues() {
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
 
-    const { data: ci } = await api.get<{ counter_number: number | null; assigned_services: AssignedService[] }>(
-      '/accounts/my-counter/',
-    );
+    const { data: ci } = await api.get<{
+      counter_number: number | null;
+      assigned_services: AssignedService[];
+      assigned_branch_id: number | null;
+      assigned_branch_name: string | null;
+    }>('/accounts/my-counter/');
 
     if (ci) {
       setCounterNumber(ci.counter_number);
+      setBranchName(ci.assigned_branch_name ?? null);
       setServices(ci.assigned_services);
 
       if (!initializedRef.current && ci.assigned_services.length > 0) {
@@ -113,9 +120,15 @@ export default function StaffQueues() {
     const waiting = waitingMap[selectedId] ?? [];
     if (waiting.length === 0) return;
     setActionLoading(true);
-    const { error } = await api.post(`/queues/${waiting[0].id}/call/`, {});
+    const next = waiting[0];
+    const { error } = await api.post(`/queues/${next.id}/call/`, {});
     setActionLoading(false);
     if (error) { Alert.alert('Error', error); return; }
+    showToast(
+      'Customer Called',
+      `Ticket ${next.ticket_number} — ${next.customer_name || 'Customer'} has been called to your counter.`,
+      'queue',
+    );
     fetchData(true);
   };
 
@@ -127,6 +140,11 @@ export default function StaffQueues() {
     const { error } = await api.post(`/queues/${serving.id}/complete/`, {});
     setActionLoading(false);
     if (error) { Alert.alert('Error', error); return; }
+    showToast(
+      'Ticket Completed',
+      `Ticket ${serving.ticket_number} — ${serving.customer_name || 'Customer'} has been served.`,
+      'success',
+    );
     fetchData(true);
   };
 
@@ -164,7 +182,11 @@ export default function StaffQueues() {
           <View style={{ flex: 1 }}>
             <Text style={styles.headerTitle}>My Counter</Text>
             <Text style={styles.headerSub}>
-              {counterNumber ? `Counter #${counterNumber}` : 'Assigned service queues'}
+              {branchName
+                ? `${branchName}${counterNumber ? ` · Counter #${counterNumber}` : ''}`
+                : counterNumber
+                  ? `Counter #${counterNumber}`
+                  : 'Assigned service queues'}
             </Text>
           </View>
           {counterNumber !== null && (

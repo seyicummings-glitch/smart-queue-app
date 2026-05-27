@@ -84,7 +84,7 @@ export default function StaffDashboard() {
 
     const [waitRes, servRes, statRes] = await Promise.all([
       api.get<any>('/queues/?status=waiting'),
-      api.get<any>('/queues/?status=serving'),
+      api.get<any>('/queues/?status=called'),
       api.get<QueueStats>('/queues/status/'),
     ]);
 
@@ -144,7 +144,7 @@ export default function StaffDashboard() {
     ]);
   };
 
-  const roleBadge = user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'superadmin'
+  const roleBadge = user?.role === 'admin' || user?.role === 'superadmin'
     ? { label: 'Admin', color: '#7c3aed', bg: '#f5f3ff' }
     : { label: 'Staff',  color: '#2563eb', bg: '#eff6ff' };
 
@@ -171,16 +171,29 @@ export default function StaffDashboard() {
           <View style={s.avatarWrap}>
             <Text style={s.avatarText}>{initials(staffName)}</Text>
           </View>
-          <View style={{ flex: 1, gap: 4 }}>
+          <View style={{ flex: 1, gap: 3 }}>
             <View style={s.nameRow}>
               <Text style={s.staffName} numberOfLines={1}>{staffName}</Text>
               <View style={[s.roleBadge, { backgroundColor: roleBadge.bg }]}>
                 <Text style={[s.roleBadgeText, { color: roleBadge.color }]}>{roleBadge.label}</Text>
               </View>
             </View>
-            <Text style={s.shiftText}>
-              {shiftTime(shiftStart.current)}
-            </Text>
+            {!!user?.assigned_branch_name && (
+              <View style={s.assignRow}>
+                <MaterialIcons name="place" size={12} color="#64748b" />
+                <Text style={s.assignTxt} numberOfLines={1}>{user.assigned_branch_name}</Text>
+              </View>
+            )}
+            {(user?.assigned_services_names ?? []).length > 0 && (
+              <View style={s.assignRow}>
+                <MaterialIcons name="room-service" size={12} color="#64748b" />
+                <Text style={s.assignTxt} numberOfLines={1}>
+                  {user!.assigned_services_names!.join(', ')}
+                  {user?.counter_number != null ? `  ·  Counter ${user.counter_number}` : ''}
+                </Text>
+              </View>
+            )}
+            <Text style={s.shiftText}>{shiftTime(shiftStart.current)}</Text>
           </View>
           {/* Active / Break toggle */}
           <TouchableOpacity
@@ -377,7 +390,9 @@ const s = StyleSheet.create({
   staffName: { fontSize: 15, fontWeight: '800', color: '#0f172a', flex: 1 },
   roleBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
   roleBadgeText: { fontSize: 10, fontWeight: '800' },
-  shiftText: { fontSize: 12, color: '#64748b', fontWeight: '500' },
+  shiftText:  { fontSize: 12, color: '#64748b', fontWeight: '500' },
+  assignRow:  { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  assignTxt:  { fontSize: 12, color: '#64748b', fontWeight: '600', flex: 1 },
   statusToggle: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
     paddingHorizontal: 10, paddingVertical: 7, borderRadius: 12,

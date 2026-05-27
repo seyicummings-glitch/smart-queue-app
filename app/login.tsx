@@ -450,7 +450,7 @@ function friendlyError(error: string): string {
 export default function LoginScreen() {
   const router = useRouter();
   const { setRole } = useAppContext();
-  const { signIn, signUp, resetPassword, verifyEmail, resendOTP } = useAuth();
+  const { signIn, signUp, resetPassword, confirmPasswordReset, verifyEmail, resendOTP } = useAuth();
 
   const [currentView, setCurrentView] = useState<AuthView>('login');
   const [language, setLanguage] = useState<Language>('en');
@@ -479,7 +479,10 @@ export default function LoginScreen() {
   const [dob, setDob]               = useState('');        // ISO YYYY-MM-DD
   const [dobDisplay, setDobDisplay] = useState('');        // e.g. "15 Mar 1995"
   const [showDOBPicker, setShowDOBPicker] = useState(false);
-  const [verifyCode, setVerifyCode] = useState('');
+  const [verifyCode,    setVerifyCode]    = useState('');
+  const [newPassword,   setNewPassword]   = useState('');
+  const [showNewPw,     setShowNewPw]     = useState(false);
+  const [verifyErrors,  setVerifyErrors]  = useState<{ code?: string; password?: string }>({});
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -536,7 +539,7 @@ export default function LoginScreen() {
 
     setLoginError('');
     setSubmitting(true);
-    const { error, role } = await signIn(email.trim(), password);
+    const { error, role, email_verified } = await signIn(email.trim(), password);
     setSubmitting(false);
 
     if (error) {
@@ -566,7 +569,7 @@ export default function LoginScreen() {
       return;
     }
 
-    setCurrentView('email-verify');
+    navigateByRole('customer');
   };
 
   const handleSendCode = async () => {
@@ -584,18 +587,30 @@ export default function LoginScreen() {
       return;
     }
 
-    Alert.alert('Email Sent', 'Check your inbox for a password reset link.');
     setCountdown(60);
+    setCurrentView('verify');
   };
 
-  const handleVerify = () => {
-    if (verifyCode.length < 6) {
-      Alert.alert('Error', 'Please enter the 6-digit code.');
+  const handleVerify = async () => {
+    const errs: { code?: string; password?: string } = {};
+    if (verifyCode.length < 6) errs.code = 'Enter the 6-digit code sent to your email.';
+    if (newPassword.length < 6) errs.password = 'New password must be at least 6 characters.';
+    if (Object.keys(errs).length > 0) { setVerifyErrors(errs); return; }
+    setVerifyErrors({});
+
+    setSubmitting(true);
+    const { error } = await confirmPasswordReset(email.trim(), verifyCode, newPassword);
+    setSubmitting(false);
+
+    if (error) {
+      Alert.alert('Error', error);
       return;
     }
-    Alert.alert('Success', 'Password reset successful! Please sign in.');
+
+    Alert.alert('Success', 'Password reset successfully! Please sign in with your new password.');
     setCurrentView('login');
     setVerifyCode('');
+    setNewPassword('');
   };
 
   const handleResendCode = async () => {
@@ -604,7 +619,7 @@ export default function LoginScreen() {
     await resetPassword(email.trim());
     setSubmitting(false);
     setCountdown(60);
-    Alert.alert('Info', 'A new reset link has been sent to your email.');
+    Alert.alert('Info', 'A new reset code has been sent to your email.');
   };
 
   const handleEmailVerify = async () => {
@@ -798,6 +813,9 @@ export default function LoginScreen() {
             placeholder="••••••••"
             placeholderTextColor="#94a3b8"
             secureTextEntry={!showPassword}
+            autoCapitalize="none"
+            autoCorrect={false}
+            maxLength={8}
           />
           <TouchableOpacity onPress={() => setShowPassword(p => !p)} style={styles.eyeButton}>
             <MaterialIcons
@@ -872,7 +890,7 @@ export default function LoginScreen() {
       </View>
 
       <View style={styles.fieldGroup}>
-        <Text style={styles.label}>Date of Birth <Text style={styles.optionalTag}>(optional)</Text></Text>
+        <Text style={styles.label}>Date of Birth</Text>
         <TouchableOpacity
           style={styles.inputRow}
           onPress={() => setShowDOBPicker(true)}
@@ -948,6 +966,7 @@ export default function LoginScreen() {
             placeholder="••••••••"
             placeholderTextColor="#94a3b8"
             secureTextEntry={!showConfirmPassword}
+            maxLength={8}
           />
           <TouchableOpacity onPress={() => setShowConfirmPassword(p => !p)} style={styles.eyeButton}>
             <MaterialIcons
@@ -1105,23 +1124,52 @@ export default function LoginScreen() {
       <Text style={styles.verifyHint}>{t.enterCode}</Text>
 
       <View style={styles.fieldGroup}>
-        <Text style={styles.label}>{t.verifyCode}</Text>
-        <View style={styles.inputRow}>
+        <Text style={styles.label}>{t.verifyCode} *</Text>
+        <View style={[styles.inputRow, verifyErrors.code ? styles.inputRowErr : null]}>
           <MaterialIcons name="key" size={18} color="#94a3b8" style={styles.inputIcon} />
           <TextInput
             style={styles.inputWithIcon}
             value={verifyCode}
-            onChangeText={setVerifyCode}
+            onChangeText={v => { setVerifyCode(v); setVerifyErrors(p => ({ ...p, code: undefined })); }}
             placeholder="000000"
             placeholderTextColor="#94a3b8"
             keyboardType="number-pad"
             maxLength={6}
           />
         </View>
+        {!!verifyErrors.code && <Text style={styles.fieldError}>{verifyErrors.code}</Text>}
       </View>
 
-      <TouchableOpacity style={styles.primaryButton} onPress={handleVerify} activeOpacity={0.85}>
-        <Text style={styles.primaryButtonText}>{t.verifyButton}</Text>
+      <View style={styles.fieldGroup}>
+        <Text style={styles.label}>New Password *</Text>
+        <View style={[styles.inputRow, verifyErrors.password ? styles.inputRowErr : null]}>
+          <MaterialIcons name="lock-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
+          <TextInput
+            style={styles.inputWithIcon}
+            value={newPassword}
+            onChangeText={v => { setNewPassword(v); setVerifyErrors(p => ({ ...p, password: undefined })); }}
+            placeholder="Min 6 characters"
+            placeholderTextColor="#94a3b8"
+            secureTextEntry={!showNewPw}
+            autoCapitalize="none"
+            maxLength={8}
+          />
+          <TouchableOpacity onPress={() => setShowNewPw(v => !v)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <MaterialIcons name={showNewPw ? 'visibility-off' : 'visibility'} size={18} color="#94a3b8" />
+          </TouchableOpacity>
+        </View>
+        {!!verifyErrors.password && <Text style={styles.fieldError}>{verifyErrors.password}</Text>}
+      </View>
+
+      <TouchableOpacity
+        style={[styles.primaryButton, submitting && styles.primaryButtonDisabled]}
+        onPress={handleVerify}
+        activeOpacity={0.85}
+        disabled={submitting}
+      >
+        {submitting
+          ? <ActivityIndicator color="#fff" size="small" />
+          : <Text style={styles.primaryButtonText}>{t.verifyButton}</Text>}
       </TouchableOpacity>
 
       <TouchableOpacity
@@ -1341,6 +1389,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 0,
     minHeight: 48,
+  },
+  inputRowErr: {
+    borderColor: '#ef4444',
+    backgroundColor: '#fff5f5',
+  },
+  fieldError: {
+    fontSize: 12,
+    color: '#ef4444',
+    marginTop: 4,
+    marginLeft: 4,
   },
   inputIcon: {
     marginRight: 10,

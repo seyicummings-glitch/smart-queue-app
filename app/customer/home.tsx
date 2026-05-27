@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, StyleSheet, ScrollView,
-  TouchableOpacity, StatusBar, ActivityIndicator, Alert,
+  TouchableOpacity, StatusBar, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -20,7 +21,7 @@ type ActiveTicket = {
   ticket_number: string;
   service_name: string;
   branch_name: string;
-  status: 'waiting' | 'serving';
+  status: 'waiting' | 'called' | 'serving' | 'completed';
   position: number;
   estimated_wait: number;
 };
@@ -69,19 +70,39 @@ function nextUpcoming(appts: Appointment[]): Appointment | null {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function ActiveQueueCard({ ticket, onLeave, onPress }: {
+function ActiveQueueCard({ ticket, onPress }: {
   ticket: ActiveTicket;
-  onLeave: () => void;
   onPress: () => void;
 }) {
-  const isServing = ticket.status === 'serving';
+  const isServing   = ticket.status === 'serving';
+  const isCalled    = ticket.status === 'called';
+  const isCompleted = ticket.status === 'completed';
+
+  if (isCompleted) {
+    return (
+      <View style={s.completedCard}>
+        <View style={s.completedCardTop}>
+          <MaterialIcons name="check-circle" size={22} color="#059669" />
+          <Text style={s.completedBadgeTxt}>COMPLETED</Text>
+          <Text style={s.completedTicketNum}>{ticket.ticket_number}</Text>
+        </View>
+        <Text style={s.completedService}>{ticket.service_name}</Text>
+        <Text style={s.completedBranch}>{ticket.branch_name}</Text>
+        <Text style={s.completedNote}>Your service has been completed. Thank you!</Text>
+      </View>
+    );
+  }
+
+  const dotColor   = isServing ? '#059669' : isCalled ? '#d97706' : '#2563eb';
+  const badgeLabel = isServing ? 'Now Serving' : isCalled ? "You've Been Called!" : 'In Queue';
+
   return (
     <TouchableOpacity style={s.queueCard} onPress={onPress} activeOpacity={0.92}>
       <View style={s.queueCardTop}>
         <View style={[s.queueBadge, isServing ? s.queueBadgeServing : s.queueBadgeWaiting]}>
-          <View style={[s.queueDot, { backgroundColor: isServing ? '#059669' : '#2563eb' }]} />
-          <Text style={[s.queueBadgeTxt, { color: isServing ? '#059669' : '#2563eb' }]}>
-            {isServing ? 'Now Serving' : 'In Queue'}
+          <View style={[s.queueDot, { backgroundColor: dotColor }]} />
+          <Text style={[s.queueBadgeTxt, { color: dotColor }]}>
+            {badgeLabel}
           </Text>
         </View>
         <Text style={s.queueTicketNum}>{ticket.ticket_number}</Text>
@@ -109,11 +130,6 @@ function ActiveQueueCard({ ticket, onLeave, onPress }: {
           </View>
         </View>
       </View>
-
-      <TouchableOpacity style={s.leaveBtn} onPress={onLeave} activeOpacity={0.8}>
-        <MaterialIcons name="exit-to-app" size={15} color="#e11d48" />
-        <Text style={s.leaveBtnTxt}>Leave Queue</Text>
-      </TouchableOpacity>
     </TouchableOpacity>
   );
 }
@@ -194,46 +210,50 @@ function NoAppointmentCard({ onBook }: { onBook: () => void }) {
 const QUICK_ACTIONS: {
   label: string; icon: IconName; color: string; bg: string; route: string;
 }[] = [
-  { label: 'Join Queue',        icon: 'queue',               color: '#2563eb', bg: '#eff6ff', route: '/customer/industries'   },
-  { label: 'Book Appointment',  icon: 'event',               color: '#059669', bg: '#f0fdf4', route: '/customer/appointments' },
-  { label: 'Queue Status',      icon: 'notifications-active', color: '#7c3aed', bg: '#f5f3ff', route: '/customer/queue-status' },
-  { label: 'Support',           icon: 'support-agent',       color: '#d97706', bg: '#fffbeb', route: '/customer/support'      },
+  { label: 'Join Queue',           icon: 'queue',               color: '#2563eb', bg: '#eff6ff', route: '/customer/industries'         },
+  { label: 'Book Appointment',     icon: 'event',               color: '#059669', bg: '#f0fdf4', route: '/customer/appointments'       },
+  { label: 'Queue Status',         icon: 'notifications-active', color: '#7c3aed', bg: '#f5f3ff', route: '/customer/queue-status'       },
+  { label: 'Register Business',    icon: 'business',            color: '#0891b2', bg: '#ecfeff', route: '/customer/register-business'  },
+  { label: 'Support',              icon: 'support-agent',       color: '#d97706', bg: '#fffbeb', route: '/customer/support'            },
 ];
 
 export default function CustomerHome() {
   const router = useRouter();
   const { user } = useAuth();
 
-  const [activeTicket,  setActiveTicket]  = useState<ActiveTicket | null>(null);
-  const [appointments,  setAppointments]  = useState<Appointment[]>([]);
-  const [loading,       setLoading]       = useState(true);
+const [activeTicket, setActiveTicket] = useState<ActiveTicket | null>(null);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [loading,      setLoading]      = useState(true);
+  const hasLoaded = useRef(false);
 
   const loadData = useCallback(async () => {
-    setLoading(true);
     const [ticketRes, apptsRes] = await Promise.all([
       api.get<ActiveTicket>('/queues/my-ticket/'),
       api.get<{ results: Appointment[] } | Appointment[]>('/appointments/'),
     ]);
-    setActiveTicket(ticketRes.error ? null : ticketRes.data);
+    const t = ticketRes.data as ActiveTicket | null;
+    const isVisible = t && ['waiting', 'called', 'serving', 'completed'].includes(t.status);
+    setActiveTicket(isVisible ? t : null);
     const raw = apptsRes.data;
     const list = Array.isArray(raw) ? raw : (raw as any)?.results ?? [];
     setAppointments(list);
-    setLoading(false);
+    if (!hasLoaded.current) {
+      hasLoaded.current = true;
+      setLoading(false);
+    }
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
-
-  const handleLeaveQueue = () => {
-    if (!activeTicket) return;
-    Alert.alert('Leave Queue', 'Are you sure you want to leave the queue?', [
-      { text: 'No', style: 'cancel' },
-      { text: 'Yes, Leave', style: 'destructive', onPress: async () => {
-        const { error } = await api.post(`/queues/${activeTicket.id}/cancel/`, {});
-        if (error) Alert.alert('Error', error);
-        else setActiveTicket(null);
-      }},
-    ]);
-  };
+  // Refresh everything on focus; poll the active ticket every 15s in the background
+  useFocusEffect(useCallback(() => {
+    loadData();
+    const interval = setInterval(async () => {
+      const { data } = await api.get<ActiveTicket>('/queues/my-ticket/');
+      const t = data as ActiveTicket | null;
+      const isVisible = t && ['waiting', 'called', 'serving', 'completed'].includes(t.status);
+      setActiveTicket(isVisible ? t : null);
+    }, 15_000);
+    return () => clearInterval(interval);
+  }, [loadData]));
 
   // Stats
   const totalAppts     = appointments.length;
@@ -283,7 +303,7 @@ export default function CustomerHome() {
             <ActivityIndicator color="#2563eb" />
           </View>
         ) : activeTicket ? (
-          <ActiveQueueCard ticket={activeTicket} onLeave={handleLeaveQueue} onPress={() => router.push('/customer/queue-status' as any)} />
+          <ActiveQueueCard ticket={activeTicket} onPress={() => router.push('/customer/queue-status' as any)} />
         ) : (
           <NoQueueCard onJoin={() => router.push('/customer/industries' as any)} />
         )}
@@ -302,6 +322,22 @@ export default function CustomerHome() {
         ) : (
           <NoAppointmentCard onBook={() => router.push('/customer/appointments' as any)} />
         )}
+
+        {/* Section: Ticket History — permanent nav entry */}
+        <TouchableOpacity
+          style={s.historyNavCard}
+          onPress={() => router.push('/customer/ticket-history' as any)}
+          activeOpacity={0.85}
+        >
+          <View style={s.historyNavIcon}>
+            <MaterialIcons name="history" size={22} color="#7c3aed" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.historyNavTitle}>Ticket History</Text>
+            <Text style={s.historyNavSub}>View all your past tickets</Text>
+          </View>
+          <MaterialIcons name="chevron-right" size={22} color="#cbd5e1" />
+        </TouchableOpacity>
 
         {/* Section: Quick Actions */}
         <Text style={s.sectionTitle}>Quick Actions</Text>
@@ -352,6 +388,19 @@ const s = StyleSheet.create({
 
   // Section title
   sectionTitle: { fontSize: 13, fontWeight: '800', color: '#0f172a', marginTop: 4 },
+
+  // Completed ticket card
+  completedCard: {
+    backgroundColor: '#f0fdf4', borderRadius: 20, padding: 18, gap: 6,
+    borderWidth: 2, borderColor: '#6ee7b7',
+    shadowColor: '#059669', shadowOpacity: 0.12, shadowRadius: 10, elevation: 3,
+  },
+  completedCardTop: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
+  completedBadgeTxt: { fontSize: 12, fontWeight: '900', color: '#059669', letterSpacing: 1, flex: 1 },
+  completedTicketNum: { fontSize: 13, fontWeight: '800', color: '#065f46', fontFamily: 'monospace' },
+  completedService: { fontSize: 20, fontWeight: '900', color: '#065f46' },
+  completedBranch: { fontSize: 13, color: '#059669', fontWeight: '500' },
+  completedNote: { fontSize: 12, color: '#047857', fontWeight: '500', marginTop: 4 },
 
   // Active queue card
   queueCard: {
@@ -412,6 +461,20 @@ const s = StyleSheet.create({
   apptStatusScheduled: { backgroundColor: '#eff6ff' },
   apptStatusConfirmed: { backgroundColor: '#f0fdf4' },
   apptStatusTxt: { fontSize: 11, fontWeight: '700' },
+
+  // Ticket History nav card (dashboard entry)
+  historyNavCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    backgroundColor: '#fff', borderRadius: 18, padding: 16,
+    borderWidth: 1, borderColor: '#e2e8f0',
+    shadowColor: '#0f172a', shadowOpacity: 0.04, shadowRadius: 6, elevation: 1,
+  },
+  historyNavIcon: {
+    width: 48, height: 48, borderRadius: 14, backgroundColor: '#f5f3ff',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  historyNavTitle: { fontSize: 15, fontWeight: '800', color: '#0f172a' },
+  historyNavSub:   { fontSize: 12, color: '#94a3b8', fontWeight: '500', marginTop: 2 },
 
   // Quick actions
   actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },

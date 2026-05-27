@@ -24,8 +24,13 @@ export interface User {
   industry_id?: string;
   counter_id?: string;
   business_id?: string;
+  email_verified?: boolean;
   created_at: string;
   updated_at: string;
+  // Staff assignment fields
+  counter_number?: number | null;
+  assigned_branch_name?: string | null;
+  assigned_services_names?: string[];
 }
 
 export interface Industry {

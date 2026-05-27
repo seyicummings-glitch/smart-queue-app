@@ -1,31 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
-import { api } from '@/lib/api';
+import { useNotifications } from '@/context/NotificationContext';
 import AppLogo from '@/components/AppLogo';
 
 export default function SQMSHeader() {
   const router = useRouter();
   const { user } = useAuth();
+  const { unreadCount: unread } = useNotifications();
 
   const initials = user?.full_name
     ? user.full_name.trim().split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
     : 'U';
-
-  const [unread, setUnread] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    const fetchCount = async () => {
-      const { data } = await api.get<{ count: number }>('/notifications/unread-count/');
-      if (!cancelled && data) setUnread(data.count);
-    };
-    fetchCount();
-    const interval = setInterval(fetchCount, 30_000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, []);
 
   return (
     <View style={styles.header}>

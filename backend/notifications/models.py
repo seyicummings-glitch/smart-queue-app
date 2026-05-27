@@ -44,6 +44,13 @@ class Notification(models.Model):
     body       = models.TextField()
     is_read    = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    # Which service this notification is about (set for queue events; null for system/admin messages)
+    service    = models.ForeignKey(
+        'services.Service',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='notifications',
+    )
 
     class Meta:
         ordering = ['-created_at']

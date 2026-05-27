@@ -14,10 +14,14 @@ def generate_ticket_number(service):
 class QueueTicket(models.Model):
     STATUS = [
         ('waiting',   'Waiting'),
-        ('serving',   'Serving'),
+        ('called',    'Called'),
+        ('serving',   'In Service'),
         ('completed', 'Completed'),
         ('cancelled', 'Cancelled'),
+        ('missed',    'Missed'),
     ]
+
+    ACTIVE_STATUSES = ['waiting', 'called', 'serving']
 
     ticket_number = models.CharField(max_length=20)
     customer      = models.ForeignKey(
@@ -41,6 +45,13 @@ class QueueTicket(models.Model):
     issued_at     = models.DateTimeField(auto_now_add=True)
     called_at     = models.DateTimeField(null=True, blank=True)
     completed_at  = models.DateTimeField(null=True, blank=True)
+    # Which staff member called this ticket (set when CallNextView is triggered)
+    served_by     = models.ForeignKey(
+        'accounts.User',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='served_tickets',
+    )
 
     class Meta:
         ordering = ['issued_at']
@@ -52,7 +63,7 @@ class QueueTicket(models.Model):
             self.position = QueueTicket.objects.filter(
                 branch=self.branch,
                 service=self.service,
-                status='waiting',
+                status__in=['waiting', 'called', 'serving'],
             ).count() + 1
         super().save(*args, **kwargs)
 

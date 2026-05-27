@@ -10,6 +10,8 @@ INDUSTRY_CHOICES = [
     ('corporate',  'Corporate'),
 ]
 
+INDUSTRY_KEYS = [k for k, _ in INDUSTRY_CHOICES]
+
 
 class Business(models.Model):
     PLANS = [
@@ -75,3 +77,16 @@ class BusinessRequest(models.Model):
 
     def __str__(self):
         return f'{self.business_name} ({self.status})'
+
+
+class IndustryControl(models.Model):
+    """Super-admin toggle — controls which industries customers can see and use."""
+    industry   = models.CharField(max_length=50, choices=INDUSTRY_CHOICES, unique=True)
+    is_visible = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['industry']
+
+    def __str__(self):
+        return f'{self.industry} ({"on" if self.is_visible else "off"})'

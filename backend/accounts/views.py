@@ -24,13 +24,13 @@ def _send_otp_email(user):
     otp = str(random.randint(100000, 999999))
     EmailOTP.objects.create(user=user, otp=otp)
     send_mail(
-        subject='Your SQMS Email Verification Code',
+        subject='Your Smart Queue Management System Email Verification Code',
         message=(
             f'Hi {user.full_name},\n\n'
-            f'Your SQMS email verification code is:\n\n'
+            f'Your Smart Queue Management System email verification code is:\n\n'
             f'  {otp}\n\n'
             f'Enter this code in the app within 10 minutes.\n\n'
-            f'If you did not create an SQMS account, please ignore this email.'
+            f'If you did not create a Smart Queue Management System account, please ignore this email.'
         ),
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[user.email],
@@ -121,6 +121,75 @@ class ResendOTPView(APIView):
         return Response({'detail': 'A new verification code has been sent to your email.'})
 
 
+class PasswordResetRequestView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email', '').strip()
+        if not email:
+            return Response({'detail': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            # Don't reveal whether the email exists
+            return Response({'detail': 'If this email is registered, a reset code has been sent.'})
+
+        otp = str(random.randint(100000, 999999))
+        EmailOTP.objects.create(user=user, otp=otp)
+
+        send_mail(
+            subject='Password Reset Code — Smart Queue Management System',
+            message=(
+                f'Hi {user.full_name},\n\n'
+                f'You requested a password reset for your Smart Queue Management System account.\n\n'
+                f'Your password reset code is:\n\n'
+                f'  {otp}\n\n'
+                f'Enter this code in the app within 10 minutes to reset your password.\n\n'
+                f'If you did not request a password reset, please ignore this email.'
+            ),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            fail_silently=True,
+        )
+        return Response({'detail': 'If this email is registered, a reset code has been sent.'})
+
+
+class PasswordResetConfirmView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email        = request.data.get('email', '').strip()
+        otp          = request.data.get('otp', '').strip()
+        new_password = request.data.get('new_password', '').strip()
+
+        if not email or not otp or not new_password:
+            return Response({'detail': 'Email, code, and new password are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if len(new_password) < 6:
+            return Response({'detail': 'Password must be at least 6 characters.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response({'detail': 'Invalid code. Please try again.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            record = EmailOTP.objects.filter(user=user, otp=otp, is_used=False).latest('created_at')
+        except EmailOTP.DoesNotExist:
+            return Response({'detail': 'Invalid code. Please try again.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not record.is_valid():
+            return Response({'detail': 'Code expired. Please request a new one.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(new_password)
+        user.save(update_fields=['password'])
+        record.is_used = True
+        record.save(update_fields=['is_used'])
+
+        return Response({'detail': 'Password reset successfully. You can now sign in.'})
+
+
 class MyCounterView(APIView):
     """Returns the calling staff member's counter number and assigned services."""
     permission_classes = [IsAuthenticated]
@@ -129,8 +198,10 @@ class MyCounterView(APIView):
         user = request.user
         services = list(user.assigned_services.all().values('id', 'name'))
         return Response({
-            'counter_number':     user.counter_number,
-            'assigned_services':  services,
+            'counter_number':       user.counter_number,
+            'assigned_services':    services,
+            'assigned_branch_id':   user.assigned_branch_id,
+            'assigned_branch_name': user.assigned_branch.name if user.assigned_branch else None,
         })
 
 
@@ -165,3 +236,31 @@ class EmployeeDetailView(generics.RetrieveUpdateDestroyAPIView):
         if user.role == 'admin':
             qs = qs.filter(business=user.business)
         return qs
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        current = request.data.get('current_password', '').strip()
+        new_pw  = request.data.get('new_password', '').strip()
+
+        if not current or not new_pw:
+            return Response(
+                {'detail': 'Both current and new password are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not request.user.check_password(current):
+            return Response(
+                {'detail': 'Current password is incorrect.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(new_pw) < 6:
+            return Response(
+                {'detail': 'New password must be at least 6 characters.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        request.user.set_password(new_pw)
+        request.user.save(update_fields=['password'])
+        return Response({'detail': 'Password changed successfully.'})

@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
   Text,
@@ -8,16 +9,217 @@ import {
   TextInput,
   StatusBar,
   Alert,
+  Platform,
+  Modal,
+  FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppContext } from '@/context/AppContext';
 import { useAuth } from '@/context/AuthContext';
+import { api } from '@/lib/api';
 import SQMSHeader from '@/components/SQMSHeader';
 import BottomNav from '@/components/BottomNav';
 
 type IconName = React.ComponentProps<typeof MaterialIcons>['name'];
+
+// ─── Country codes ────────────────────────────────────────────────────────────
+
+const COUNTRIES = [
+  { code: 'TR', name: 'Turkey',               dial: '+90',  flag: '🇹🇷' },
+  { code: 'CY', name: 'Cyprus (TRNC)',         dial: '+90',  flag: '🇨🇾' },
+  { code: 'US', name: 'United States',         dial: '+1',   flag: '🇺🇸' },
+  { code: 'GB', name: 'United Kingdom',        dial: '+44',  flag: '🇬🇧' },
+  { code: 'DE', name: 'Germany',               dial: '+49',  flag: '🇩🇪' },
+  { code: 'FR', name: 'France',                dial: '+33',  flag: '🇫🇷' },
+  { code: 'IT', name: 'Italy',                 dial: '+39',  flag: '🇮🇹' },
+  { code: 'ES', name: 'Spain',                 dial: '+34',  flag: '🇪🇸' },
+  { code: 'NL', name: 'Netherlands',           dial: '+31',  flag: '🇳🇱' },
+  { code: 'GR', name: 'Greece',               dial: '+30',  flag: '🇬🇷' },
+  { code: 'NG', name: 'Nigeria',               dial: '+234', flag: '🇳🇬' },
+  { code: 'GH', name: 'Ghana',                 dial: '+233', flag: '🇬🇭' },
+  { code: 'KE', name: 'Kenya',                 dial: '+254', flag: '🇰🇪' },
+  { code: 'ZA', name: 'South Africa',          dial: '+27',  flag: '🇿🇦' },
+  { code: 'EG', name: 'Egypt',                 dial: '+20',  flag: '🇪🇬' },
+  { code: 'SA', name: 'Saudi Arabia',          dial: '+966', flag: '🇸🇦' },
+  { code: 'AE', name: 'UAE',                   dial: '+971', flag: '🇦🇪' },
+  { code: 'IN', name: 'India',                 dial: '+91',  flag: '🇮🇳' },
+  { code: 'PK', name: 'Pakistan',              dial: '+92',  flag: '🇵🇰' },
+  { code: 'CN', name: 'China',                 dial: '+86',  flag: '🇨🇳' },
+  { code: 'JP', name: 'Japan',                 dial: '+81',  flag: '🇯🇵' },
+  { code: 'KR', name: 'South Korea',           dial: '+82',  flag: '🇰🇷' },
+  { code: 'AU', name: 'Australia',             dial: '+61',  flag: '🇦🇺' },
+  { code: 'CA', name: 'Canada',               dial: '+1',   flag: '🇨🇦' },
+  { code: 'BR', name: 'Brazil',               dial: '+55',  flag: '🇧🇷' },
+  { code: 'MX', name: 'Mexico',               dial: '+52',  flag: '🇲🇽' },
+  { code: 'RU', name: 'Russia',               dial: '+7',   flag: '🇷🇺' },
+  { code: 'IR', name: 'Iran',                 dial: '+98',  flag: '🇮🇷' },
+  { code: 'IQ', name: 'Iraq',                 dial: '+964', flag: '🇮🇶' },
+  { code: 'SY', name: 'Syria',                dial: '+963', flag: '🇸🇾' },
+  { code: 'LB', name: 'Lebanon',              dial: '+961', flag: '🇱🇧' },
+  { code: 'JO', name: 'Jordan',               dial: '+962', flag: '🇯🇴' },
+  { code: 'MA', name: 'Morocco',              dial: '+212', flag: '🇲🇦' },
+  { code: 'DZ', name: 'Algeria',              dial: '+213', flag: '🇩🇿' },
+  { code: 'TN', name: 'Tunisia',              dial: '+216', flag: '🇹🇳' },
+  { code: 'LY', name: 'Libya',               dial: '+218', flag: '🇱🇾' },
+  { code: 'SD', name: 'Sudan',               dial: '+249', flag: '🇸🇩' },
+  { code: 'ET', name: 'Ethiopia',            dial: '+251', flag: '🇪🇹' },
+  { code: 'TZ', name: 'Tanzania',            dial: '+255', flag: '🇹🇿' },
+  { code: 'UG', name: 'Uganda',              dial: '+256', flag: '🇺🇬' },
+  { code: 'PH', name: 'Philippines',         dial: '+63',  flag: '🇵🇭' },
+  { code: 'ID', name: 'Indonesia',           dial: '+62',  flag: '🇮🇩' },
+  { code: 'MY', name: 'Malaysia',            dial: '+60',  flag: '🇲🇾' },
+  { code: 'SG', name: 'Singapore',           dial: '+65',  flag: '🇸🇬' },
+  { code: 'BD', name: 'Bangladesh',          dial: '+880', flag: '🇧🇩' },
+  { code: 'LK', name: 'Sri Lanka',           dial: '+94',  flag: '🇱🇰' },
+  { code: 'NP', name: 'Nepal',               dial: '+977', flag: '🇳🇵' },
+  { code: 'AF', name: 'Afghanistan',         dial: '+93',  flag: '🇦🇫' },
+  { code: 'PL', name: 'Poland',              dial: '+48',  flag: '🇵🇱' },
+  { code: 'UA', name: 'Ukraine',             dial: '+380', flag: '🇺🇦' },
+  { code: 'RO', name: 'Romania',             dial: '+40',  flag: '🇷🇴' },
+  { code: 'SE', name: 'Sweden',              dial: '+46',  flag: '🇸🇪' },
+  { code: 'NO', name: 'Norway',              dial: '+47',  flag: '🇳🇴' },
+  { code: 'DK', name: 'Denmark',             dial: '+45',  flag: '🇩🇰' },
+  { code: 'FI', name: 'Finland',             dial: '+358', flag: '🇫🇮' },
+  { code: 'PT', name: 'Portugal',            dial: '+351', flag: '🇵🇹' },
+  { code: 'CH', name: 'Switzerland',         dial: '+41',  flag: '🇨🇭' },
+  { code: 'AT', name: 'Austria',             dial: '+43',  flag: '🇦🇹' },
+  { code: 'BE', name: 'Belgium',             dial: '+32',  flag: '🇧🇪' },
+  { code: 'AR', name: 'Argentina',           dial: '+54',  flag: '🇦🇷' },
+  { code: 'CL', name: 'Chile',              dial: '+56',  flag: '🇨🇱' },
+  { code: 'CO', name: 'Colombia',           dial: '+57',  flag: '🇨🇴' },
+  { code: 'VE', name: 'Venezuela',          dial: '+58',  flag: '🇻🇪' },
+  { code: 'PE', name: 'Peru',               dial: '+51',  flag: '🇵🇪' },
+];
+
+type Country = typeof COUNTRIES[number];
+
+// ─── Phone field with country picker ─────────────────────────────────────────
+
+function PhoneField({
+  value, onChangeText, editable,
+}: {
+  value: string;
+  onChangeText: (full: string, number: string, country: Country) => void;
+  editable: boolean;
+}) {
+  const [selectedCountry, setSelectedCountry] = useState<Country>(COUNTRIES[0]);
+  const [numberOnly, setNumberOnly]           = useState('');
+  const [modalVisible, setModalVisible]       = useState(false);
+  const [search, setSearch]                   = useState('');
+  const initialized = useRef(false);
+
+  useEffect(() => {
+    if (initialized.current || !value) return;
+    initialized.current = true;
+    const found = COUNTRIES.find(c => value.startsWith(c.dial));
+    if (found) {
+      setSelectedCountry(found);
+      setNumberOnly(value.slice(found.dial.length));
+    } else {
+      setNumberOnly(value.replace(/[^0-9]/g, '').slice(0, 12));
+    }
+  }, [value]);
+
+  const filtered = useMemo(() =>
+    COUNTRIES.filter(c =>
+      c.name.toLowerCase().includes(search.toLowerCase()) ||
+      c.dial.includes(search)
+    ), [search]);
+
+  const handleNumberChange = (text: string) => {
+    const digits = text.replace(/[^0-9]/g, '').slice(0, 12);
+    setNumberOnly(digits);
+    onChangeText(`${selectedCountry.dial}${digits}`, digits, selectedCountry);
+  };
+
+  const handleSelectCountry = (country: Country) => {
+    setSelectedCountry(country);
+    setModalVisible(false);
+    setSearch('');
+    onChangeText(`${country.dial}${numberOnly}`, numberOnly, country);
+  };
+
+  return (
+    <View style={styles.fieldGroup}>
+      <Text style={styles.fieldLabel}>Phone Number</Text>
+      <View style={[styles.inputRow, !editable && styles.inputRowDisabled]}>
+        <TouchableOpacity
+          style={styles.dialCodeBtn}
+          onPress={() => editable && setModalVisible(true)}
+          disabled={!editable}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.dialFlag}>{selectedCountry.flag}</Text>
+          <Text style={[styles.dialCode, !editable && { color: '#94a3b8' }]}>
+            {selectedCountry.dial}
+          </Text>
+          {editable && <MaterialIcons name="arrow-drop-down" size={18} color="#94a3b8" />}
+        </TouchableOpacity>
+        <View style={styles.dialDivider} />
+        <TextInput
+          style={[styles.textInput, !editable && styles.textInputDisabled]}
+          value={numberOnly}
+          onChangeText={handleNumberChange}
+          editable={editable}
+          keyboardType="phone-pad"
+          placeholder="Phone number"
+          placeholderTextColor="#94a3b8"
+        />
+      </View>
+
+      <Modal
+        visible={modalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFillObject} onPress={() => setModalVisible(false)} />
+          <View style={styles.countrySheet}>
+            <View style={styles.countrySheetHeader}>
+              <Text style={styles.countrySheetTitle}>Select Country Code</Text>
+              <TouchableOpacity onPress={() => { setModalVisible(false); setSearch(''); }}>
+                <MaterialIcons name="close" size={22} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.countrySearch}>
+              <MaterialIcons name="search" size={18} color="#94a3b8" />
+              <TextInput
+                style={styles.countrySearchInput}
+                placeholder="Search country…"
+                placeholderTextColor="#94a3b8"
+                value={search}
+                onChangeText={setSearch}
+                autoFocus
+              />
+            </View>
+            <FlatList
+              data={filtered}
+              keyExtractor={item => item.code}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[styles.countryRow, selectedCountry.code === item.code && styles.countryRowActive]}
+                  onPress={() => handleSelectCountry(item)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.countryFlag}>{item.flag}</Text>
+                  <Text style={styles.countryName}>{item.name}</Text>
+                  <Text style={styles.countryDial}>{item.dial}</Text>
+                  {selectedCountry.code === item.code && (
+                    <MaterialIcons name="check" size={16} color="#2563eb" />
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
 
 const ROLE_LABEL: Record<string, string> = {
   super_admin: 'Super Admin',
@@ -131,7 +333,7 @@ function SectionHeader({
 export default function ProfileScreen() {
   const router = useRouter();
   const { role, setRole } = useAppContext();
-  const { user, signOut } = useAuth();
+  const { user, signOut, updateProfile } = useAuth();
 
   const roleKey    = role ?? 'customer';
   const roleLabel  = ROLE_LABEL[roleKey] ?? 'Customer';
@@ -150,6 +352,7 @@ export default function ProfileScreen() {
     setOpenSection(prev => (prev === s ? null : s));
 
   const [isEditing, setIsEditing] = useState(false);
+  const [hasDraft, setHasDraft]   = useState(false);
   const [form, setForm] = useState({
     firstName,
     lastName,
@@ -157,14 +360,29 @@ export default function ProfileScreen() {
     phone: '',
   });
 
+  const DRAFT_KEY = `profile_draft_${user?.id ?? 'unknown'}`;
+
   useEffect(() => {
     if (user) {
       const parts = (user.full_name ?? '').trim().split(' ');
-      setForm({
+      const base = {
         firstName: parts[0] ?? '',
         lastName: parts.slice(1).join(' ') || '',
         email: user.email ?? '',
         phone: '',
+      };
+      AsyncStorage.getItem(DRAFT_KEY).then(raw => {
+        if (raw) {
+          try {
+            const draft = JSON.parse(raw);
+            setForm({ ...base, ...draft });
+            setHasDraft(true);
+          } catch {
+            setForm(base);
+          }
+        } else {
+          setForm(base);
+        }
       });
     }
   }, [user]);
@@ -176,40 +394,115 @@ export default function ProfileScreen() {
     emailDigest:   false,
   });
 
+  const [saving, setSaving] = useState(false);
+
   const [showPwSection, setShowPwSection] = useState(false);
   const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' });
   const [pwVisible, setPwVisible] = useState({ current: false, next: false, confirm: false });
 
-  const handleSave = () => {
+  const handleConfirm = useCallback(async () => {
+    try {
+      await AsyncStorage.setItem(DRAFT_KEY, JSON.stringify({
+        firstName: form.firstName,
+        lastName:  form.lastName,
+        phone:     form.phone,
+      }));
+    } catch {}
+    setHasDraft(true);
+    setIsEditing(false);
+  }, [DRAFT_KEY, form]);
+
+  const handleSave = useCallback(async () => {
     if (!form.firstName.trim()) {
       Alert.alert('Error', 'Name cannot be empty.');
       return;
     }
+    setSaving(true);
+    const { error } = await updateProfile({
+      full_name: `${form.firstName.trim()} ${form.lastName.trim()}`.trim(),
+      email: form.email.trim(),
+    });
+    setSaving(false);
+    if (error) {
+      Alert.alert('Error', error);
+      return;
+    }
+    try { await AsyncStorage.removeItem(DRAFT_KEY); } catch {}
+    setHasDraft(false);
     setIsEditing(false);
     Alert.alert('Saved', 'Profile updated successfully.');
-  };
+  }, [DRAFT_KEY, form, updateProfile]);
 
-  const handleChangePassword = () => {
+  const handleCancel = useCallback(async () => {
+    if (hasDraft) {
+      try {
+        const raw = await AsyncStorage.getItem(DRAFT_KEY);
+        if (raw) {
+          const draft = JSON.parse(raw);
+          setForm(prev => ({ ...prev, ...draft }));
+        }
+      } catch {}
+    } else if (user) {
+      const parts = (user.full_name ?? '').trim().split(' ');
+      setForm({
+        firstName: parts[0] ?? '',
+        lastName:  parts.slice(1).join(' ') || '',
+        email:     user.email ?? '',
+        phone:     '',
+      });
+    }
+    setIsEditing(false);
+  }, [DRAFT_KEY, hasDraft, user]);
+
+  const handleDiscardDraft = useCallback(async () => {
+    try { await AsyncStorage.removeItem(DRAFT_KEY); } catch {}
+    setHasDraft(false);
+    if (user) {
+      const parts = (user.full_name ?? '').trim().split(' ');
+      setForm({
+        firstName: parts[0] ?? '',
+        lastName:  parts.slice(1).join(' ') || '',
+        email:     user.email ?? '',
+        phone:     '',
+      });
+    }
+  }, [DRAFT_KEY, user]);
+
+  const handleChangePassword = async () => {
     if (!pwForm.current.trim()) { Alert.alert('Error', 'Enter your current password.'); return; }
     if (pwForm.next.length < 6)  { Alert.alert('Error', 'New password must be at least 6 characters.'); return; }
     if (pwForm.next !== pwForm.confirm) { Alert.alert('Error', 'Passwords do not match.'); return; }
+    setSaving(true);
+    const { error } = await api.post('/accounts/change-password/', {
+      current_password: pwForm.current,
+      new_password:     pwForm.next,
+    });
+    setSaving(false);
+    if (error) { Alert.alert('Error', error); return; }
     setPwForm({ current: '', next: '', confirm: '' });
     setShowPwSection(false);
     Alert.alert('Success', 'Password changed successfully.');
   };
 
-  const handleLogout = () => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign Out', style: 'destructive',
-        onPress: async () => {
-          await signOut();
-          setRole(null);
-          router.replace('/login' as any);
+  const handleLogout = async () => {
+    if (Platform.OS === 'web') {
+      if (!window.confirm('Are you sure you want to sign out?')) return;
+      await signOut();
+      setRole(null);
+      router.replace('/login' as any);
+    } else {
+      Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign Out', style: 'destructive',
+          onPress: async () => {
+            await signOut();
+            setRole(null);
+            router.replace('/login' as any);
+          },
         },
-      },
-    ]);
+      ]);
+    }
   };
 
   return (
@@ -253,17 +546,29 @@ export default function ProfileScreen() {
             <View style={styles.sectionBody}>
               <View style={styles.sectionBodyHeader}>
                 {!isEditing ? (
-                  <TouchableOpacity style={styles.editBtn} onPress={() => setIsEditing(true)}>
-                    <MaterialIcons name="edit" size={14} color="#fff" />
-                    <Text style={styles.editBtnText}>Edit</Text>
-                  </TouchableOpacity>
+                  <View style={styles.editActionRow}>
+                    {hasDraft && (
+                      <TouchableOpacity style={[styles.editBtn, { backgroundColor: '#059669' }]} onPress={handleSave}>
+                        <MaterialIcons name="save" size={14} color="#fff" />
+                        <Text style={styles.editBtnText}>Save</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity style={styles.editBtn} onPress={() => setIsEditing(true)}>
+                      <MaterialIcons name="edit" size={14} color="#fff" />
+                      <Text style={styles.editBtnText}>Edit</Text>
+                    </TouchableOpacity>
+                  </View>
                 ) : (
                   <View style={styles.editActionRow}>
-                    <TouchableOpacity style={[styles.editBtn, { backgroundColor: '#059669' }]} onPress={handleSave}>
+                    <TouchableOpacity style={[styles.editBtn, { backgroundColor: '#059669', opacity: saving ? 0.6 : 1 }]} onPress={handleSave} disabled={saving}>
                       <MaterialIcons name="check" size={14} color="#fff" />
-                      <Text style={styles.editBtnText}>Save</Text>
+                      <Text style={styles.editBtnText}>{saving ? 'Saving…' : 'Save'}</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.editBtn, { backgroundColor: '#94a3b8' }]} onPress={() => setIsEditing(false)}>
+                    <TouchableOpacity style={[styles.editBtn, { backgroundColor: '#2563eb' }]} onPress={handleConfirm}>
+                      <MaterialIcons name="bookmark" size={14} color="#fff" />
+                      <Text style={styles.editBtnText}>Confirm</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.editBtn, { backgroundColor: '#94a3b8' }]} onPress={handleCancel}>
                       <MaterialIcons name="close" size={14} color="#fff" />
                       <Text style={styles.editBtnText}>Cancel</Text>
                     </TouchableOpacity>
@@ -271,10 +576,20 @@ export default function ProfileScreen() {
                 )}
               </View>
 
+              {hasDraft && !isEditing && (
+                <View style={styles.draftBanner}>
+                  <MaterialIcons name="info-outline" size={14} color="#d97706" />
+                  <Text style={styles.draftBannerText}>Unsaved changes — tap Save to apply</Text>
+                  <TouchableOpacity onPress={handleDiscardDraft} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <MaterialIcons name="close" size={14} color="#d97706" />
+                  </TouchableOpacity>
+                </View>
+              )}
+
               <ProfileField label="First Name"    value={form.firstName} icon="person"    editable={isEditing} onChangeText={v => setForm(p => ({ ...p, firstName: v }))} />
               <ProfileField label="Last Name"     value={form.lastName}  icon="person"    editable={isEditing} onChangeText={v => setForm(p => ({ ...p, lastName: v }))} />
-              <ProfileField label="Email Address" value={form.email}     icon="email"     editable={false}     onChangeText={() => {}} keyboardType="email-address" />
-              <ProfileField label="Phone Number"  value={form.phone}     icon="phone"     editable={isEditing} onChangeText={v => setForm(p => ({ ...p, phone: v.replace(/[^0-9]/g, '').slice(0, 10) }))} keyboardType="phone-pad" />
+              <ProfileField label="Email Address" value={form.email}     icon="email"     editable={isEditing} onChangeText={v => setForm(p => ({ ...p, email: v }))} keyboardType="email-address" />
+              <PhoneField value={form.phone} onChangeText={(full) => setForm(p => ({ ...p, phone: full }))} editable={isEditing} />
               <ProfileField label="Role"          value={roleLabel}      icon="admin-panel-settings" editable={false} onChangeText={() => {}} />
             </View>
           )}
@@ -345,8 +660,8 @@ export default function ProfileScreen() {
                   <PasswordField label="New Password"     value={pwForm.next}    onChangeText={v => setPwForm(p => ({ ...p, next: v }))}    visible={pwVisible.next}    onToggle={() => setPwVisible(p => ({ ...p, next: !p.next }))} />
                   <PasswordField label="Confirm Password" value={pwForm.confirm} onChangeText={v => setPwForm(p => ({ ...p, confirm: v }))} visible={pwVisible.confirm} onToggle={() => setPwVisible(p => ({ ...p, confirm: !p.confirm }))} />
                   <View style={styles.pwBtnRow}>
-                    <TouchableOpacity style={styles.pwSaveBtn} onPress={handleChangePassword}>
-                      <Text style={styles.pwSaveBtnText}>Save Password</Text>
+                    <TouchableOpacity style={[styles.pwSaveBtn, saving && { opacity: 0.6 }]} onPress={handleChangePassword} disabled={saving}>
+                      <Text style={styles.pwSaveBtnText}>{saving ? 'Saving…' : 'Save Password'}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.pwCancelBtn} onPress={() => { setShowPwSection(false); setPwForm({ current: '', next: '', confirm: '' }); }}>
                       <Text style={styles.pwCancelBtnText}>Cancel</Text>
@@ -433,6 +748,8 @@ const styles = StyleSheet.create({
   },
   editBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
   editActionRow: { flexDirection: 'row', gap: 8 },
+  draftBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#fffbeb', borderRadius: 8, padding: 10, borderWidth: 1, borderColor: '#fde68a', marginBottom: 8 },
+  draftBannerText: { flex: 1, fontSize: 12, fontWeight: '600', color: '#d97706' },
 
   // Fields
   fieldGroup: { marginBottom: 10, marginTop: 4 },
@@ -482,6 +799,23 @@ const styles = StyleSheet.create({
   pwSaveBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
   pwCancelBtn: { flex: 1, backgroundColor: '#f1f5f9', paddingVertical: 12, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' },
   pwCancelBtnText: { fontSize: 14, fontWeight: '700', color: '#64748b' },
+
+  // Country code picker
+  dialCodeBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingRight: 8 },
+  dialFlag: { fontSize: 18 },
+  dialCode: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
+  dialDivider: { width: 1, height: 20, backgroundColor: '#e2e8f0', marginRight: 8 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  countrySheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '75%' as any, padding: 20 },
+  countrySheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  countrySheetTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
+  countrySearch: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#f8fafc', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' },
+  countrySearchInput: { flex: 1, fontSize: 14, color: '#0f172a' },
+  countryRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  countryRowActive: { backgroundColor: '#eff6ff', borderRadius: 10, paddingHorizontal: 8 },
+  countryFlag: { fontSize: 22 },
+  countryName: { flex: 1, fontSize: 14, fontWeight: '600', color: '#0f172a' },
+  countryDial: { fontSize: 13, color: '#64748b', fontWeight: '600', marginRight: 4 },
 
   // Sign out
   signOutBtn: {

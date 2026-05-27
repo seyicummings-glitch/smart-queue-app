@@ -687,8 +687,9 @@ export default function AppointmentsScreen() {
   const { user } = useAuth();
   const isStaff = role === 'staff' || role === 'admin' || role === 'super_admin' || role === 'superadmin';
 
-  const [appointments,     setAppointments]     = useState<Appointment[]>([]);
-  const [loading,          setLoading]          = useState(true);
+  const [appointments,        setAppointments]        = useState<Appointment[]>([]);
+  const [loading,             setLoading]             = useState(true);
+  const [staffServiceNames,   setStaffServiceNames]   = useState<string[] | null>(null);
   const [showBooking,      setShowBooking]       = useState(false);
   const [rescheduleTarget, setRescheduleTarget]  = useState<Appointment | null>(null);
   const [form,             setForm]              = useState<BookingForm>(EMPTY_FORM);
@@ -713,6 +714,22 @@ export default function AppointmentsScreen() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // For staff: fetch their assigned service names so we can filter visible groups
+  useEffect(() => {
+    if (role !== 'staff') return;
+    api.get<{ assigned_services: { id: number; name: string }[] }>('/accounts/my-counter/')
+      .then(({ data }) => {
+        if (data) setStaffServiceNames(data.assigned_services.map(s => s.name));
+      });
+  }, [role]);
+
+  // Declared here — before any early returns — so all render paths can access it
+  const visibleGroups = (role === 'staff' && staffServiceNames !== null && staffServiceNames.length > 0)
+    ? SERVICE_GROUPS.filter(group =>
+        group.services.some(svc => staffServiceNames.includes(svc.name))
+      )
+    : SERVICE_GROUPS;
 
   const openBooking = (reschedule?: Appointment) => {
     if (reschedule) {
@@ -978,7 +995,7 @@ export default function AppointmentsScreen() {
                 </TouchableOpacity>
 
                 {/* Services grouped by industry */}
-                {SERVICE_GROUPS.map(group => (
+                {visibleGroups.map(group => (
                   <View key={group.industry}>
                     {/* Industry header */}
                     <View style={[st.groupHdr, { borderLeftColor: group.color }]}>
@@ -1065,7 +1082,7 @@ export default function AppointmentsScreen() {
           </View>
         ) : (
           <ScrollView contentContainerStyle={st.content} showsVerticalScrollIndicator={false}>
-            {SERVICE_GROUPS.map(group => (
+            {visibleGroups.map(group => (
               <View key={group.industry}>
                 <View style={[st.groupHdr, { borderLeftColor: group.color }]}>
                   <View style={[st.svcGroupDot, { backgroundColor: group.color + '20' }]}>

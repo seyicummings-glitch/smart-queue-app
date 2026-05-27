@@ -8,8 +8,25 @@ from .serializers import NotificationSerializer, StaffMessageSerializer, StaffMe
 class NotificationListView(generics.ListAPIView):
     serializer_class   = NotificationSerializer
     permission_classes = [IsAuthenticated]
+
     def get_queryset(self):
-        return Notification.objects.filter(user=self.request.user)
+        from django.db.models import Q
+        user = self.request.user
+        qs   = Notification.objects.filter(user=user)
+
+        # Staff only see:
+        #   • non-queue notifications (admin messages, system, success, alert)
+        #   • queue notifications tagged to one of their assigned services
+        # This hides both old untagged queue alerts AND alerts for services
+        # that belong to other staff members.
+        if user.role == 'staff':
+            assigned_ids = list(user.assigned_services.values_list('id', flat=True))
+            qs = qs.filter(
+                Q(type__in=['system', 'appointment', 'success', 'alert']) |
+                Q(type='queue', service_id__in=assigned_ids)
+            )
+
+        return qs
 
 class UnreadCountView(APIView):
     permission_classes = [IsAuthenticated]

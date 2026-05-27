@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, usePathname } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppContext } from '@/context/AppContext';
-import { api } from '@/lib/api';
+import { useNotifications } from '@/context/NotificationContext';
 
 type Tab = {
   key: string;
@@ -14,27 +14,27 @@ type Tab = {
 };
 
 const CUSTOMER_TABS: Tab[] = [
-  { key: 'dashboard',    label: 'Dashboard',    icon: 'dashboard',             route: '/customer/home'       },
-  { key: 'services',     label: 'Services',     icon: 'room-service',          route: '/customer/industries' },
-  { key: 'queue-status', label: 'Queue Status', icon: 'notifications-active',  route: '/customer/queue-status' },
-  { key: 'appointments', label: 'Appointments', icon: 'event',                 route: '/customer/appointments' },
-  { key: 'support',      label: 'Support',      icon: 'support-agent',         route: '/customer/support'    },
+  { key: 'dashboard',    label: 'Dashboard',    icon: 'dashboard',            route: '/customer/home'         },
+  { key: 'services',     label: 'Services',     icon: 'room-service',         route: '/customer/industries'   },
+  { key: 'queue-status', label: 'Queue Status', icon: 'notifications-active', route: '/customer/queue-status' },
+  { key: 'appointments', label: 'Appointments', icon: 'event',                route: '/customer/appointments' },
+  { key: 'support',      label: 'Support',      icon: 'support-agent',        route: '/customer/support'      },
 ];
 
 const STAFF_TABS: Tab[] = [
-  { key: 'dashboard',    label: 'Dashboard',    icon: 'dashboard',       route: '/staff/dashboard'       },
-  { key: 'my-counter',   label: 'My Counter',   icon: 'person-pin',      route: '/staff/queues'          },
-  { key: 'appointments', label: 'Appointments', icon: 'event',           route: '/customer/appointments' },
-  { key: 'support',      label: 'Support',      icon: 'support-agent',   route: '/customer/support'      },
-  { key: 'chat',         label: 'Chat',         icon: 'chat',            route: '/staff/chat'            },
+  { key: 'dashboard',     label: 'Dashboard',     icon: 'dashboard',    route: '/staff/dashboard'        },
+  { key: 'my-counter',    label: 'My Counter',    icon: 'person-pin',   route: '/staff/queues'           },
+  { key: 'appointments',  label: 'Appointments',  icon: 'event',        route: '/customer/appointments'  },
+  { key: 'notifications', label: 'Alerts',        icon: 'notifications',route: '/notifications'          },
+  { key: 'chat',          label: 'Chat',          icon: 'chat',         route: '/staff/chat'             },
 ];
 
 const ADMIN_TABS: Tab[] = [
-  { key: 'dashboard',    label: 'Dashboard',    icon: 'dashboard',       route: '/admin/dashboard'       },
-  { key: 'appointments', label: 'Appointments', icon: 'event',           route: '/customer/appointments' },
-  { key: 'queue',        label: 'Queue',        icon: 'list-alt',        route: '/admin/queue-status'    },
-  { key: 'support',      label: 'Support',      icon: 'support-agent',   route: '/customer/support'      },
-  { key: 'chat',         label: 'Chat',         icon: 'chat',            route: '/admin/messages'        },
+  { key: 'dashboard',     label: 'Dashboard',     icon: 'dashboard',    route: '/admin/dashboard'        },
+  { key: 'appointments',  label: 'Appointments',  icon: 'event',        route: '/customer/appointments'  },
+  { key: 'queue',         label: 'Queue',         icon: 'list-alt',     route: '/admin/queue-status'     },
+  { key: 'notifications', label: 'Alerts',        icon: 'notifications',route: '/notifications'          },
+  { key: 'chat',          label: 'Chat',          icon: 'chat',         route: '/admin/messages'         },
 ];
 
 export default function BottomNav() {
@@ -42,21 +42,7 @@ export default function BottomNav() {
   const pathname = usePathname();
   const { role } = useAppContext();
   const insets   = useSafeAreaInsets();
-
-  const isStaff = role === 'staff' || role === 'admin' || role === 'super_admin' || role === 'superadmin';
-
-  const [unread, setUnread] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    const fetchCount = async () => {
-      const { data } = await api.get<{ count: number }>('/notifications/unread-count/');
-      if (!cancelled && data) setUnread(data.count);
-    };
-    fetchCount();
-    const interval = setInterval(fetchCount, 30_000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, []);
+  const { unreadCount } = useNotifications();
 
   const tabs =
     role === 'admin' || role === 'super_admin' || role === 'superadmin' ? ADMIN_TABS :
@@ -66,8 +52,8 @@ export default function BottomNav() {
   return (
     <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
       {tabs.map(tab => {
-        const active  = pathname === tab.route || pathname.startsWith(tab.route + '/');
-        const showBadge = isStaff && tab.key === 'alerts' && unread > 0;
+        const active     = pathname === tab.route || pathname.startsWith(tab.route + '/');
+        const showBadge  = tab.key === 'notifications' && unreadCount > 0;
 
         return (
           <TouchableOpacity
@@ -84,7 +70,7 @@ export default function BottomNav() {
               />
               {showBadge && (
                 <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{unread > 9 ? '9+' : unread}</Text>
+                  <Text style={styles.badgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
                 </View>
               )}
             </View>

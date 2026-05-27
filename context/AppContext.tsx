@@ -17,7 +17,7 @@ export type ActiveTicket = {
   waitTime: number;
   peopleAhead: number;
   issuedAt: string;
-  status: 'waiting' | 'serving' | 'completed';
+  status: 'waiting' | 'called' | 'serving' | 'completed' | 'missed';
   aheadTickets?: string[];  // ticket numbers of people ahead
   counter?: string;
 };
@@ -27,7 +27,7 @@ type AppContextType = {
   role: UserRole;
   setRole: (role: UserRole) => void;
   activeTicket: ActiveTicket | null;
-  setActiveTicket: (ticket: ActiveTicket | null) => void;
+  setActiveTicket: React.Dispatch<React.SetStateAction<ActiveTicket | null>>;
 };
 
 const AppContext = createContext<AppContextType>({

@@ -40,6 +40,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     phone          = models.CharField(max_length=20, blank=True)
     date_of_birth  = models.DateField(null=True, blank=True)
     counter_number = models.PositiveIntegerField(null=True, blank=True)
+    assigned_branch = models.ForeignKey(
+        'branches.Branch',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='assigned_staff',
+    )
     assigned_services = models.ManyToManyField(
         'services.Service',
         blank=True,

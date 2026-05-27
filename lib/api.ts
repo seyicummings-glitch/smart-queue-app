@@ -13,10 +13,11 @@ const SERVER_URL_KEY = 'sqms_server_url';
 // In-memory cache of the user-configured URL (loaded once at startup)
 let _runtimeUrl: string | null = null;
 
-/** Call once at app startup (e.g. in AuthProvider) to restore the saved URL. */
+/** Call once at app startup. Loads a manually saved URL only if present. */
 export async function initServerUrl(): Promise<void> {
-  // Runtime URL override via logo tap (5x) takes effect immediately in-session.
-  // We do NOT load from AsyncStorage so the hardcoded BASE_URL is always the default.
+  // Do not load from AsyncStorage — TUNNEL_BASE_URL in this file is always
+  // kept current by start-dev.sh, which rewrites it on every server start.
+  // AsyncStorage overrides caused stale-URL failures after tunnel restarts.
 }
 
 /** Persist a new server URL immediately — affects all subsequent requests. */
@@ -31,15 +32,19 @@ export async function getStoredServerUrl(): Promise<string | null> {
   return AsyncStorage.getItem(SERVER_URL_KEY);
 }
 
+// Tunnel URL — updated automatically by start-dev.sh on every server start.
+// Never edit this line manually; start-dev.sh rewrites it.
+const TUNNEL_BASE_URL = 'https://unknown-lists-offer-farm.trycloudflare.com/api';
+
 function getDefaultBaseUrl(): string {
   if (!__DEV__) return 'https://your-production-api.com/api';
-  return 'https://beginner-rehab-province-consequences.trycloudflare.com/api';
+  return TUNNEL_BASE_URL;
 }
 
 // Static fallback (used before initServerUrl() resolves, or if no URL is saved)
 export const BASE_URL = getDefaultBaseUrl();
 
-// The effective URL used for every request — runtime value wins over static fallback
+// The effective URL used for every request — AsyncStorage value wins over static fallback
 function effectiveBaseUrl(): string {
   return _runtimeUrl ?? BASE_URL;
 }
