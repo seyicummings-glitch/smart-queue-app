@@ -110,7 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       { email, password },
       false,
     );
-    if (error || !data) return { error: error ?? 'Login failed' };
+    if (error || !data || !data.tokens?.access) return { error: error ?? 'Login failed. Check your internet connection.' };
 
     await storeTokens(data.tokens.access, data.tokens.refresh);
     setUser(toUser(data.user));
