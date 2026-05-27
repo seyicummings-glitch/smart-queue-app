@@ -32,12 +32,10 @@ export async function getStoredServerUrl(): Promise<string | null> {
   return AsyncStorage.getItem(SERVER_URL_KEY);
 }
 
-// Tunnel URL — updated automatically by start-dev.sh on every server start.
-// Never edit this line manually; start-dev.sh rewrites it.
-const TUNNEL_BASE_URL = 'https://unknown-lists-offer-farm.trycloudflare.com/api';
+// Production URL — Railway cloud deployment. Never changes.
+const TUNNEL_BASE_URL = 'https://smart-queue-app-production.up.railway.app/api';
 
 function getDefaultBaseUrl(): string {
-  if (!__DEV__) return 'https://your-production-api.com/api';
   return TUNNEL_BASE_URL;
 }
 
