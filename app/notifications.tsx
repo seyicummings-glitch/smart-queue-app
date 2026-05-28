@@ -8,7 +8,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useNotifications } from '@/context/NotificationContext';
 import SQMSHeader from '@/components/SQMSHeader';
 import BottomNav from '@/components/BottomNav';
-import { api } from '@/lib/api';
+import { api, clearCache } from '@/lib/api';
 
 type IconName = React.ComponentProps<typeof MaterialIcons>['name'];
 
@@ -96,6 +96,7 @@ export default function NotificationsScreen() {
   }, []);
 
   const onRefresh = useCallback(() => {
+    clearCache();
     setRefreshing(true);
     loadNotifications();
   }, [loadNotifications]);

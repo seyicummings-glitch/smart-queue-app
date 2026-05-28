@@ -7,7 +7,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
-import { api } from '@/lib/api';
+import { api, clearCache } from '@/lib/api';
 
 type IconName = React.ComponentProps<typeof MaterialIcons>['name'];
 
@@ -83,6 +83,7 @@ export default function Businesses() {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const onRefresh = useCallback(() => {
+    clearCache();
     setRefreshing(true);
     fetchAll();
   }, [fetchAll]);

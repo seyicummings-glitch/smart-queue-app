@@ -1,48 +1,32 @@
 /**
  * HTTP client for the Django REST backend.
- * Handles JWT storage, auto-refresh on 401, and error normalisation.
- *
- * Server URL is configurable at runtime via setServerUrl() — stored in
- * AsyncStorage so it survives restarts without a code change or rebuild.
+ * Handles JWT storage, auto-refresh on 401, caching, and error normalisation.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const REQUEST_TIMEOUT_MS = 15_000;
-const SERVER_URL_KEY = 'sqms_server_url';
+const REQUEST_TIMEOUT_MS = 8_000;   // reduced from 15s — fail faster
+const SERVER_URL_KEY     = 'sqms_server_url';
 
-// In-memory cache of the user-configured URL (loaded once at startup)
 let _runtimeUrl: string | null = null;
 
-/** Call once at app startup. Loads a manually saved URL only if present. */
-export async function initServerUrl(): Promise<void> {
-  // Do not load from AsyncStorage — TUNNEL_BASE_URL in this file is always
-  // kept current by start-dev.sh, which rewrites it on every server start.
-  // AsyncStorage overrides caused stale-URL failures after tunnel restarts.
-}
+export async function initServerUrl(): Promise<void> {}
 
-/** Persist a new server URL immediately — affects all subsequent requests. */
 export async function setServerUrl(url: string): Promise<void> {
   const clean = url.trim().replace(/\/+$/, '');
   _runtimeUrl = clean;
   await AsyncStorage.setItem(SERVER_URL_KEY, clean);
 }
 
-/** Return the currently saved URL (raw, without /api suffix), or null. */
 export async function getStoredServerUrl(): Promise<string | null> {
   return AsyncStorage.getItem(SERVER_URL_KEY);
 }
 
-// Production URL — Railway cloud deployment. Never changes.
 const TUNNEL_BASE_URL = 'https://smart-queue-app-production.up.railway.app/api';
 
-function getDefaultBaseUrl(): string {
-  return TUNNEL_BASE_URL;
-}
+function getDefaultBaseUrl(): string { return TUNNEL_BASE_URL; }
 
-// Static fallback (used before initServerUrl() resolves, or if no URL is saved)
 export const BASE_URL = getDefaultBaseUrl();
 
-// The effective URL used for every request — AsyncStorage value wins over static fallback
 function effectiveBaseUrl(): string {
   return _runtimeUrl ?? BASE_URL;
 }
@@ -52,24 +36,34 @@ const TOKEN_KEYS = {
   REFRESH: 'sqms_refresh',
 } as const;
 
-// ── Token storage ─────────────────────────────────────────────────────────────
-export async function getAccessToken(): Promise<string | null> {
-  return AsyncStorage.getItem(TOKEN_KEYS.ACCESS);
-}
-
-export async function getRefreshToken(): Promise<string | null> {
-  return AsyncStorage.getItem(TOKEN_KEYS.REFRESH);
-}
+export async function getAccessToken():  Promise<string | null> { return AsyncStorage.getItem(TOKEN_KEYS.ACCESS);  }
+export async function getRefreshToken(): Promise<string | null> { return AsyncStorage.getItem(TOKEN_KEYS.REFRESH); }
 
 export async function storeTokens(access: string, refresh: string): Promise<void> {
-  await AsyncStorage.multiSet([
-    [TOKEN_KEYS.ACCESS,  access],
-    [TOKEN_KEYS.REFRESH, refresh],
-  ]);
+  await AsyncStorage.multiSet([[TOKEN_KEYS.ACCESS, access], [TOKEN_KEYS.REFRESH, refresh]]);
 }
 
 export async function clearTokens(): Promise<void> {
   await AsyncStorage.multiRemove([TOKEN_KEYS.ACCESS, TOKEN_KEYS.REFRESH]);
+}
+
+// ── In-memory GET cache (stale-while-revalidate) ──────────────────────────────
+const CACHE_TTL = 12_000;  // serve cached data for up to 12 seconds
+const _cache    = new Map<string, { data: unknown; ts: number }>();
+
+function hitCache(path: string): unknown | null {
+  const e = _cache.get(path);
+  return e && (Date.now() - e.ts) < CACHE_TTL ? e.data : null;
+}
+
+function setCache(path: string, data: unknown): void {
+  _cache.set(path, { data, ts: Date.now() });
+}
+
+/** Call at the start of a manual refresh to force fresh data. */
+export function clearCache(path?: string): void {
+  if (path) _cache.delete(path);
+  else      _cache.clear();
 }
 
 // ── Fetch with timeout ────────────────────────────────────────────────────────
@@ -130,7 +124,6 @@ export async function apiRequest<T = unknown>(
   try {
     let res = await makeRequest();
 
-    // Token expired → refresh once and retry
     if (res.status === 401 && auth) {
       const newToken = await refreshAccessToken();
       if (!newToken) return { data: null, error: 'Session expired. Please log in again.' };
@@ -138,7 +131,6 @@ export async function apiRequest<T = unknown>(
       res = await makeRequest();
     }
 
-    // 204 No Content — successful but no body
     if (res.status === 204) return { data: null as unknown as T, error: null };
 
     const json = await res.json().catch(() => ({}));
@@ -147,17 +139,11 @@ export async function apiRequest<T = unknown>(
       let msg = `Request failed (${res.status})`;
       if (typeof json === 'object' && json !== null) {
         const j = json as Record<string, unknown>;
-        if (typeof j.detail === 'string' && j.detail) {
-          msg = j.detail;
-        } else if (typeof j.message === 'string' && j.message) {
-          msg = j.message;
-        } else if (typeof j.error === 'string' && j.error) {
-          msg = j.error;
-        } else {
-          const flat = Object.values(j)
-            .flat()
-            .filter((v): v is string => typeof v === 'string')
-            .join(' · ');
+        if (typeof j.detail  === 'string' && j.detail)  msg = j.detail;
+        else if (typeof j.message === 'string' && j.message) msg = j.message;
+        else if (typeof j.error   === 'string' && j.error)   msg = j.error;
+        else {
+          const flat = Object.values(j).flat().filter((v): v is string => typeof v === 'string').join(' · ');
           if (flat) msg = flat;
         }
       }
@@ -167,27 +153,38 @@ export async function apiRequest<T = unknown>(
     return { data: json as T, error: null };
   } catch (e: unknown) {
     if (e instanceof Error && e.name === 'AbortError') {
-      return { data: null, error: `Connection timed out (${effectiveBaseUrl()}). Update the server URL in the login screen.` };
+      return { data: null, error: 'Connection timed out. Check your internet and try again.' };
     }
-    const msg = e instanceof Error ? e.message : 'Network error';
-    return { data: null, error: `${msg} — update the server URL in the login screen.` };
+    return { data: null, error: 'Network error. Check your internet connection.' };
   }
 }
 
 // ── Convenience wrappers ──────────────────────────────────────────────────────
 export const api = {
-  get:    <T = unknown>(path: string, auth = true) =>
-    apiRequest<T>('GET', path, undefined, auth),
+  /**
+   * GET with automatic caching. Returns cached data instantly if fresh (<12s).
+   * Pass `fresh = true` on manual refreshes to bypass cache.
+   */
+  get: <T = unknown>(path: string, auth = true, fresh = false): Promise<ApiResult<T>> => {
+    if (!fresh) {
+      const cached = hitCache(path);
+      if (cached != null) return Promise.resolve({ data: cached as T, error: null });
+    }
+    return apiRequest<T>('GET', path, undefined, auth).then(result => {
+      if (!result.error && result.data !== null) setCache(path, result.data);
+      return result;
+    });
+  },
 
-  post:   <T = unknown>(path: string, body?: Record<string, unknown>, auth = true) =>
-    apiRequest<T>('POST', path, body, auth),
+  post: <T = unknown>(path: string, body?: Record<string, unknown>, auth = true) =>
+    apiRequest<T>('POST', path, body, auth).then(r => { if (!r.error) clearCache(); return r; }),
 
-  patch:  <T = unknown>(path: string, body?: Record<string, unknown>, auth = true) =>
-    apiRequest<T>('PATCH', path, body, auth),
+  patch: <T = unknown>(path: string, body?: Record<string, unknown>, auth = true) =>
+    apiRequest<T>('PATCH', path, body, auth).then(r => { if (!r.error) clearCache(); return r; }),
 
-  put:    <T = unknown>(path: string, body?: Record<string, unknown>, auth = true) =>
-    apiRequest<T>('PUT', path, body, auth),
+  put: <T = unknown>(path: string, body?: Record<string, unknown>, auth = true) =>
+    apiRequest<T>('PUT', path, body, auth).then(r => { if (!r.error) clearCache(); return r; }),
 
   delete: <T = unknown>(path: string, auth = true) =>
-    apiRequest<T>('DELETE', path, undefined, auth),
+    apiRequest<T>('DELETE', path, undefined, auth).then(r => { if (!r.error) clearCache(); return r; }),
 };

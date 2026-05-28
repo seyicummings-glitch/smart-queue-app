@@ -10,7 +10,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import SQMSHeader from '@/components/SQMSHeader';
 import BottomNav from '@/components/BottomNav';
 import { useAuth } from '@/context/AuthContext';
-import { api } from '@/lib/api';
+import { api, clearCache } from '@/lib/api';
 
 type IconName = React.ComponentProps<typeof MaterialIcons>['name'];
 
@@ -287,7 +287,7 @@ const [activeTicket, setActiveTicket] = useState<ActiveTicket | null>(null);
           </View>
           <TouchableOpacity
             style={s.refreshBtn}
-            onPress={() => { setRefreshing(true); loadData(); }}
+            onPress={() => { clearCache(); setRefreshing(true); loadData(); }}
             disabled={refreshing}
           >
             {refreshing

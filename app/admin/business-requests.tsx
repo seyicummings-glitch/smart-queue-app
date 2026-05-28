@@ -6,7 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
-import { api } from '@/lib/api';
+import { api, clearCache } from '@/lib/api';
 
 type IconName = React.ComponentProps<typeof MaterialIcons>['name'];
 type ReqStatus = 'pending' | 'approved' | 'rejected';
@@ -154,7 +154,7 @@ export default function BusinessRequests() {
         </View>
         <TouchableOpacity
           style={styles.backBtn}
-          onPress={() => { setRefreshing(true); fetchAll(); }}
+          onPress={() => { clearCache(); setRefreshing(true); fetchAll(); }}
           disabled={refreshing}
         >
           {refreshing
