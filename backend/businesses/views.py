@@ -338,8 +338,8 @@ class IndustryControlToggleView(APIView):
 # ─── Customer-facing ──────────────────────────────────────────────────────────
 
 class VisibleIndustriesView(APIView):
-    """Customer-facing: returns only industries the super admin has enabled."""
-    permission_classes = [IsAuthenticated]
+    """Customer-facing: returns only industries the super admin has enabled. No login required."""
+    permission_classes = [AllowAny]
 
     def get(self, request):
         industries = Industry.objects.filter(is_visible=True).order_by('label')
@@ -363,47 +363,77 @@ class DirectoryView(APIView):
         from branches.models import Branch
         from services.models import Service
         from queues.models import QueueTicket
+        from django.db.models import Count, Q as DQ
 
         industry = request.query_params.get('industry', '').strip()
-        businesses = Business.objects.filter(status='active')
+
+        # Fetch everything in as few queries as possible
+        businesses = (
+            Business.objects
+            .filter(status='active')
+            .prefetch_related(
+                'branch_set',
+            )
+            .order_by('name')
+        )
         if industry:
             businesses = businesses.filter(
                 Q(industry=industry) | Q(industries__key=industry)
             ).distinct()
 
+        # Pre-fetch all active branches for these businesses in one query
+        biz_ids = list(businesses.values_list('id', flat=True))
+
+        branches_qs = (
+            Branch.objects
+            .filter(business_id__in=biz_ids, is_active=True)
+            .prefetch_related('service_set')
+            .order_by('name')
+        )
+
+        # Queue counts in one aggregation query
+        queue_counts = {
+            row['branch_id']: row['cnt']
+            for row in QueueTicket.objects
+            .filter(branch_id__in=branches_qs.values('id'), status__in=['waiting', 'serving'])
+            .values('branch_id')
+            .annotate(cnt=Count('id'))
+        }
+
+        # Services in one query keyed by business_id
+        services_qs = (
+            Service.objects
+            .filter(business_id__in=biz_ids, is_active=True)
+            .order_by('name')
+        )
+        # Group: (business_id, branch_id|None) → list of services
+        from collections import defaultdict
+        svc_map = defaultdict(list)
+        for svc in services_qs:
+            svc_map[(svc.business_id, svc.branch_id)].append(svc)
+            if svc.branch_id is not None:
+                svc_map[(svc.business_id, None)].append(svc)
+
+        branch_map = defaultdict(list)
+        for branch in branches_qs:
+            branch_map[branch.business_id].append(branch)
+
         result = []
-        for biz in businesses.order_by('name'):
-            branches = Branch.objects.filter(business=biz, is_active=True).order_by('name')
+        for biz in businesses:
             branches_data = []
-            for branch in branches:
-                services = Service.objects.filter(
-                    business=biz,
-                    is_active=True,
-                ).filter(
-                    Q(branch=branch) | Q(branch__isnull=True)
-                ).order_by('name')
-
-                queue_count = QueueTicket.objects.filter(
-                    branch=branch,
-                    status__in=['waiting', 'serving'],
-                ).count()
-
+            for branch in branch_map[biz.id]:
+                branch_svcs = svc_map.get((biz.id, branch.id), [])
                 branches_data.append({
                     'id':          branch.id,
                     'name':        branch.name,
                     'address':     branch.address or '',
                     'phone':       branch.phone or '',
-                    'queue_count': queue_count,
+                    'queue_count': queue_counts.get(branch.id, 0),
                     'services': [
-                        {
-                            'id':             svc.id,
-                            'name':           svc.name,
-                            'estimated_time': svc.estimated_time,
-                        }
-                        for svc in services
+                        {'id': s.id, 'name': s.name, 'estimated_time': s.estimated_time}
+                        for s in branch_svcs
                     ],
                 })
-
             result.append({
                 'id':           biz.id,
                 'name':         biz.name,

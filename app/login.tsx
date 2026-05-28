@@ -815,7 +815,7 @@ export default function LoginScreen() {
             secureTextEntry={!showPassword}
             autoCapitalize="none"
             autoCorrect={false}
-            maxLength={8}
+            maxLength={128}
           />
           <TouchableOpacity onPress={() => setShowPassword(p => !p)} style={styles.eyeButton}>
             <MaterialIcons
@@ -925,7 +925,7 @@ export default function LoginScreen() {
             placeholder="••••••••"
             placeholderTextColor="#94a3b8"
             secureTextEntry={!showPassword}
-            maxLength={8}
+            maxLength={128}
           />
           <TouchableOpacity onPress={() => setShowPassword(p => !p)} style={styles.eyeButton}>
             <MaterialIcons
@@ -966,7 +966,7 @@ export default function LoginScreen() {
             placeholder="••••••••"
             placeholderTextColor="#94a3b8"
             secureTextEntry={!showConfirmPassword}
-            maxLength={8}
+            maxLength={128}
           />
           <TouchableOpacity onPress={() => setShowConfirmPassword(p => !p)} style={styles.eyeButton}>
             <MaterialIcons
@@ -1152,7 +1152,7 @@ export default function LoginScreen() {
             placeholderTextColor="#94a3b8"
             secureTextEntry={!showNewPw}
             autoCapitalize="none"
-            maxLength={8}
+            maxLength={128}
           />
           <TouchableOpacity onPress={() => setShowNewPw(v => !v)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <MaterialIcons name={showNewPw ? 'visibility-off' : 'visibility'} size={18} color="#94a3b8" />
