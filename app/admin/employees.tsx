@@ -503,7 +503,7 @@ function AssignmentWizard({
 export default function EmployeeManagement() {
   const router = useRouter();
   const { user: currentUser } = useAuth();
-  const isSuperAdmin = currentUser?.role === 'super_admin';
+  const isSuperAdmin = currentUser?.role === 'superadmin' || currentUser?.role === 'super_admin';
 
   const [employees,   setEmployees]   = useState<Employee[]>([]);
   const [backendSvcs, setBackendSvcs] = useState<BackendService[]>([]);
@@ -557,7 +557,7 @@ export default function EmployeeManagement() {
 
     // Always seed branches in parallel — idempotent and ensures DB has branch data
     const [empRes, svcs, seedRes] = await Promise.all([
-      api.get<any>('/accounts/employees/'),
+      api.get<any>('/accounts/employees/?page_size=500', true, true),
       loadServices(),
       api.post<any>('/branches/seed/', {}),
     ]);
