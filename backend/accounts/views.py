@@ -254,11 +254,18 @@ class EmployeeDetailView(generics.RetrieveUpdateDestroyAPIView):
         from businesses.models import BusinessRequest, Business
         from django.contrib.admin.models import LogEntry
 
-        # Nullify FK references that should be kept
+        # Nullify FK references that should stay in the DB
         BusinessRequest.objects.filter(reviewed_by=instance).update(reviewed_by=None)
         Business.objects.filter(owner=instance).update(owner=None)
 
-        # Delete all records owned by this user
+        # Delete JWT tokens
+        try:
+            from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
+            OutstandingToken.objects.filter(user=instance).delete()
+        except Exception:
+            pass
+
+        # Delete all personal records
         EmailOTP.objects.filter(user=instance).delete()
         instance.groups.clear()
         instance.user_permissions.clear()
