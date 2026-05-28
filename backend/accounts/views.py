@@ -250,6 +250,11 @@ class EmployeeDetailView(generics.RetrieveUpdateDestroyAPIView):
             qs = qs.filter(business=user.business)
         return qs
 
+    def perform_destroy(self, instance):
+        # Delete related OTP records first to avoid FK constraint errors
+        EmailOTP.objects.filter(user=instance).delete()
+        instance.delete()
+
 
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
