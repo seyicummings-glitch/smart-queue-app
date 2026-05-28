@@ -2,11 +2,23 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, StatusBar, Alert, ActivityIndicator, Modal,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { api } from '@/lib/api';
+
+type IconName = React.ComponentProps<typeof MaterialIcons>['name'];
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type IndustryControl = {
+  id: number;
+  industry: string;   // key e.g. "banking"
+  label: string;
+  is_visible: boolean;
+};
 
 type Business = {
   id: number;
@@ -20,37 +32,42 @@ type Business = {
   created_at: string;
 };
 
-type IndustryControl = {
-  id: number;
-  industry: string;
-  label: string;
-  is_visible: boolean;
+// ── Static metadata for the 6 built-in industries ────────────────────────────
+
+const INDUSTRY_META: Record<string, { icon: IconName; color: string }> = {
+  banking:    { icon: 'account-balance', color: '#2563eb' },
+  healthcare: { icon: 'favorite',        color: '#e11d48' },
+  retail:     { icon: 'shopping-bag',    color: '#d97706' },
+  government: { icon: 'gavel',           color: '#475569' },
+  education:  { icon: 'school',          color: '#4f46e5' },
+  corporate:  { icon: 'business',        color: '#0d9488' },
 };
 
-const INDUSTRY_META: Record<string, { icon: React.ComponentProps<typeof MaterialIcons>['name']; color: string; bg: string }> = {
-  banking:    { icon: 'account-balance', color: '#2563eb', bg: '#eff6ff' },
-  healthcare: { icon: 'local-hospital',  color: '#e11d48', bg: '#fff1f2' },
-  retail:     { icon: 'shopping-bag',    color: '#d97706', bg: '#fffbeb' },
-  government: { icon: 'gavel',           color: '#475569', bg: '#f1f5f9' },
-  education:  { icon: 'school',          color: '#0d9488', bg: '#f0fdfa' },
-  corporate:  { icon: 'business',        color: '#7c3aed', bg: '#f5f3ff' },
-};
-
-const INDUSTRY_OPTIONS = ['banking', 'healthcare', 'retail', 'government', 'education', 'corporate'];
-const INDUSTRY_LABELS:  Record<string, string> = {
-  banking: 'Banking', healthcare: 'Healthcare', retail: 'Retail',
-  government: 'Government', education: 'Education', corporate: 'Corporate',
+const INDUSTRY_LABELS: Record<string, string> = {
+  banking:    'Banking',
+  healthcare: 'Healthcare',
+  retail:     'Retail',
+  government: 'Government',
+  education:  'Education',
+  corporate:  'Corporate',
 };
 
 export default function Businesses() {
   const router = useRouter();
-  const [businesses,  setBizs]      = useState<Business[]>([]);
-  const [controls,    setControls]  = useState<IndustryControl[]>([]);
-  const [search,      setSearch]    = useState('');
-  const [loading,     setLoading]   = useState(true);
-  const [toggling,    setToggling]  = useState<string | null>(null);
-  const [assignModal, setAssignModal] = useState<{ bizId: number; current: string } | null>(null);
-  const [assigning,   setAssigning]  = useState(false);
+
+  const [controls,   setControls]   = useState<IndustryControl[]>([]);
+  const [businesses, setBizs]       = useState<Business[]>([]);
+  const [search,     setSearch]     = useState('');
+  const [loading,    setLoading]    = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [toggling,   setToggling]   = useState<string | null>(null);
+
+  // Assign Industry modal (single select from the 6)
+  const [assignModal, setAssignModal] = useState<{ bizId: number; bizName: string; current: string } | null>(null);
+  const [assignPick,  setAssignPick]  = useState('');
+  const [assigning,   setAssigning]   = useState(false);
+
+  // ── Fetch ─────────────────────────────────────────────────────────────────
 
   const fetchAll = useCallback(async () => {
     const [bizRes, ctrlRes] = await Promise.all([
@@ -60,39 +77,60 @@ export default function Businesses() {
     setBizs(Array.isArray(bizRes.data) ? bizRes.data : (bizRes.data as any)?.results ?? []);
     setControls(Array.isArray(ctrlRes.data) ? ctrlRes.data : []);
     setLoading(false);
+    setRefreshing(false);
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchAll();
+  }, [fetchAll]);
 
   const filtered = businesses.filter(b =>
     b.name.toLowerCase().includes(search.toLowerCase()) ||
     b.industry.toLowerCase().includes(search.toLowerCase())
   );
 
-  const toggleIndustry = async (industry: string, currentVal: boolean) => {
-    setToggling(industry);
-    const { error } = await api.patch(`/businesses/industry-controls/${industry}/`, { is_visible: !currentVal });
-    if (error) { Alert.alert('Error', error); }
-    else {
-      setControls(prev => prev.map(c =>
-        c.industry === industry ? { ...c, is_visible: !currentVal } : c
-      ));
+  // ── Toggle industry visibility ────────────────────────────────────────────
+
+  const toggleIndustry = async (ctrl: IndustryControl) => {
+    setToggling(ctrl.industry);
+    const newVal = !ctrl.is_visible;
+    const { error } = await api.patch(
+      `/businesses/industry-controls/${ctrl.industry}/`,
+      { is_visible: newVal },
+    );
+    if (error) {
+      Alert.alert('Error', error);
+    } else {
+      setControls(prev =>
+        prev.map(c => c.industry === ctrl.industry ? { ...c, is_visible: newVal } : c)
+      );
     }
     setToggling(null);
   };
 
-  const assignIndustry = async (bizId: number, industry: string) => {
-    setAssigning(true);
-    const { error } = await api.patch(`/businesses/${bizId}/`, { industry });
-    if (error) { Alert.alert('Error', error); }
-    else {
-      setBizs(prev => prev.map(b => b.id === bizId ? { ...b, industry } : b));
-      setAssignModal(null);
-    }
-    setAssigning(false);
+  // ── Assign industry to business ───────────────────────────────────────────
+
+  const openAssign = (biz: Business) => {
+    setAssignPick(biz.industry);
+    setAssignModal({ bizId: biz.id, bizName: biz.name, current: biz.industry });
   };
 
-  const remove = (id: number) => {
+  const saveAssign = async () => {
+    if (!assignModal) return;
+    setAssigning(true);
+    const { error } = await api.patch(`/businesses/${assignModal.bizId}/`, {
+      industry: assignPick,
+    });
+    setAssigning(false);
+    if (error) { Alert.alert('Error', error); return; }
+    setBizs(prev => prev.map(b => b.id === assignModal!.bizId ? { ...b, industry: assignPick } : b));
+    setAssignModal(null);
+  };
+
+  const removeBiz = (id: number) => {
     Alert.alert('Remove Business', 'Remove this business from the platform?', [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -106,62 +144,71 @@ export default function Businesses() {
     ]);
   };
 
+  // ─────────────────────────────────────────────────────────────────────────────
+
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={s.container} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
 
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
           <MaterialIcons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>All Businesses</Text>
-        <TouchableOpacity style={styles.refreshBtn} onPress={fetchAll}>
+        <Text style={s.headerTitle}>All Businesses</Text>
+        <TouchableOpacity style={s.refreshBtn} onPress={onRefresh}>
           <MaterialIcons name="refresh" size={22} color="#64748b" />
         </TouchableOpacity>
       </View>
 
       {loading ? (
-        <View style={styles.center}>
+        <View style={s.center}>
           <ActivityIndicator size="large" color="#059669" />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-
-          {/* ── Industry Visibility Controls ─────────────────────────────── */}
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <MaterialIcons name="visibility" size={18} color="#4f46e5" />
-              <Text style={styles.sectionTitle}>Customer Industry Access</Text>
+        <ScrollView
+          contentContainerStyle={s.content}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} />
+          }
+        >
+          {/* ── Customer Industry Access ─────────────────────────────────── */}
+          <View style={s.sectionCard}>
+            <View style={s.sectionRow}>
+              <MaterialIcons name="category" size={18} color="#4f46e5" />
+              <Text style={s.sectionTitle}>Customer Industry Access</Text>
             </View>
-            <Text style={styles.sectionSub}>
-              Toggle which industries customers can see and use in the app.
+            <Text style={s.sectionSub}>
+              Choose which industries customers can see and use in the app.
             </Text>
-            <View style={styles.industryGrid}>
+
+            <View style={s.gridWrap}>
               {controls.map(ctrl => {
-                const meta = INDUSTRY_META[ctrl.industry] ?? INDUSTRY_META.corporate;
-                const isOn = ctrl.is_visible;
+                const meta   = INDUSTRY_META[ctrl.industry];
+                const icon   = meta?.icon   ?? 'business';
+                const color  = meta?.color  ?? '#6B7280';
+                const isOn   = ctrl.is_visible;
+                const isBusy = toggling === ctrl.industry;
                 return (
                   <TouchableOpacity
                     key={ctrl.industry}
-                    style={[styles.industryToggle, isOn ? styles.industryToggleOn : styles.industryToggleOff]}
-                    onPress={() => toggleIndustry(ctrl.industry, isOn)}
-                    disabled={toggling === ctrl.industry}
+                    style={[s.tile, { borderColor: isOn ? color : '#e2e8f0' }]}
+                    onPress={() => toggleIndustry(ctrl)}
+                    disabled={isBusy}
                     activeOpacity={0.8}
                   >
-                    {toggling === ctrl.industry ? (
-                      <ActivityIndicator size="small" color={isOn ? '#fff' : '#94a3b8'} />
-                    ) : (
-                      <MaterialIcons
-                        name={meta.icon}
-                        size={18}
-                        color={isOn ? '#fff' : '#94a3b8'}
-                      />
-                    )}
-                    <Text style={[styles.industryToggleTxt, { color: isOn ? '#fff' : '#94a3b8' }]}>
+                    <View style={[s.tileIcon, { backgroundColor: color + '18' }]}>
+                      {isBusy
+                        ? <ActivityIndicator size="small" color={color} />
+                        : <MaterialIcons name={icon} size={22} color={color} />
+                      }
+                    </View>
+                    <Text style={[s.tileLabel, { color: isOn ? '#0f172a' : '#94a3b8' }]}>
                       {ctrl.label}
                     </Text>
-                    <View style={[styles.onOffPill, isOn ? styles.onPill : styles.offPill]}>
-                      <Text style={[styles.onOffTxt, { color: isOn ? '#059669' : '#94a3b8' }]}>
+                    <View style={[s.badge, { backgroundColor: isOn ? '#ecfdf5' : '#f1f5f9' }]}>
+                      <View style={[s.badgeDot, { backgroundColor: isOn ? '#059669' : '#94a3b8' }]} />
+                      <Text style={[s.badgeTxt, { color: isOn ? '#059669' : '#94a3b8' }]}>
                         {isOn ? 'ON' : 'OFF'}
                       </Text>
                     </View>
@@ -172,10 +219,10 @@ export default function Businesses() {
           </View>
 
           {/* ── Search ───────────────────────────────────────────────────── */}
-          <View style={styles.searchWrap}>
+          <View style={s.searchWrap}>
             <MaterialIcons name="search" size={18} color="#94a3b8" />
             <TextInput
-              style={styles.searchInput}
+              style={s.searchInput}
               placeholder="Search businesses…"
               placeholderTextColor="#94a3b8"
               value={search}
@@ -190,59 +237,50 @@ export default function Businesses() {
 
           {/* ── Business list ─────────────────────────────────────────────── */}
           {filtered.map(biz => {
-            const meta = INDUSTRY_META[biz.industry] ?? INDUSTRY_META.corporate;
+            const meta  = INDUSTRY_META[biz.industry];
+            const color = meta?.color ?? '#6B7280';
+            const icon  = meta?.icon  ?? 'business';
             return (
-              <View key={biz.id} style={styles.card}>
-                <View style={styles.cardTop}>
-                  <View style={[styles.cardIcon, { backgroundColor: meta.bg }]}>
-                    <MaterialIcons name={meta.icon} size={20} color={meta.color} />
+              <View key={biz.id} style={s.card}>
+                <View style={s.cardTop}>
+                  <View style={[s.cardIcon, { backgroundColor: color + '18' }]}>
+                    <MaterialIcons name={icon} size={20} color={color} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.bizName}>{biz.name}</Text>
-                    <View style={styles.industryRow}>
-                      <View style={[styles.industryChip, { backgroundColor: meta.bg }]}>
-                        <Text style={[styles.industryChipTxt, { color: meta.color }]}>
-                          {INDUSTRY_LABELS[biz.industry] ?? biz.industry}
-                        </Text>
+                    <Text style={s.bizName}>{biz.name}</Text>
+                    {biz.industry ? (
+                      <View style={s.chipRow}>
+                        <View style={[s.chip, { backgroundColor: color + '18' }]}>
+                          <Text style={[s.chipTxt, { color }]}>
+                            {INDUSTRY_LABELS[biz.industry] ?? biz.industry}
+                          </Text>
+                        </View>
                       </View>
-                    </View>
+                    ) : null}
                   </View>
-                  <View style={[styles.statusDotWrap, { backgroundColor: biz.status === 'active' ? '#ecfdf5' : '#f1f5f9' }]}>
-                    <View style={[styles.statusDot, { backgroundColor: biz.status === 'active' ? '#059669' : '#94a3b8' }]} />
-                    <Text style={[styles.statusTxt, { color: biz.status === 'active' ? '#059669' : '#94a3b8' }]}>
+                  <View style={[s.statusWrap, { backgroundColor: biz.status === 'active' ? '#ecfdf5' : '#f1f5f9' }]}>
+                    <View style={[s.statusDot, { backgroundColor: biz.status === 'active' ? '#059669' : '#94a3b8' }]} />
+                    <Text style={[s.statusTxt, { color: biz.status === 'active' ? '#059669' : '#94a3b8' }]}>
                       {biz.status.charAt(0).toUpperCase() + biz.status.slice(1)}
                     </Text>
                   </View>
                 </View>
 
                 {(biz.email || biz.phone) && (
-                  <View style={styles.metaRow}>
-                    {biz.email ? (
-                      <View style={styles.metaItem}>
-                        <MaterialIcons name="email" size={12} color="#94a3b8" />
-                        <Text style={styles.metaText}>{biz.email}</Text>
-                      </View>
-                    ) : null}
-                    {biz.phone ? (
-                      <View style={styles.metaItem}>
-                        <MaterialIcons name="phone" size={12} color="#94a3b8" />
-                        <Text style={styles.metaText}>{biz.phone}</Text>
-                      </View>
-                    ) : null}
+                  <View style={s.metaRow}>
+                    {biz.email ? <View style={s.metaItem}><MaterialIcons name="email" size={12} color="#94a3b8" /><Text style={s.metaTxt}>{biz.email}</Text></View> : null}
+                    {biz.phone ? <View style={s.metaItem}><MaterialIcons name="phone" size={12} color="#94a3b8" /><Text style={s.metaTxt}>{biz.phone}</Text></View> : null}
                   </View>
                 )}
 
-                <View style={styles.actions}>
-                  <TouchableOpacity
-                    style={styles.assignBtn}
-                    onPress={() => setAssignModal({ bizId: biz.id, current: biz.industry })}
-                  >
-                    <MaterialIcons name="category" size={14} color="#4f46e5" />
-                    <Text style={styles.assignText}>Assign Industry</Text>
+                <View style={s.actions}>
+                  <TouchableOpacity style={s.assignBtn} onPress={() => openAssign(biz)}>
+                    <MaterialIcons name="edit" size={14} color="#4f46e5" />
+                    <Text style={s.assignTxt}>Assign Industry</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.removeBtn} onPress={() => remove(biz.id)}>
+                  <TouchableOpacity style={s.removeBtn} onPress={() => removeBiz(biz.id)}>
                     <MaterialIcons name="delete" size={14} color="#e11d48" />
-                    <Text style={styles.removeText}>Remove</Text>
+                    <Text style={s.removeTxt}>Remove</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -250,10 +288,10 @@ export default function Businesses() {
           })}
 
           {filtered.length === 0 && (
-            <View style={styles.emptyState}>
+            <View style={s.emptyState}>
               <MaterialIcons name="business" size={48} color="#cbd5e1" />
-              <Text style={styles.emptyText}>No businesses registered yet</Text>
-              <Text style={styles.emptySub}>Approve business requests to see them here</Text>
+              <Text style={s.emptyText}>No businesses registered yet</Text>
+              <Text style={s.emptySub}>Approve business requests to see them here</Text>
             </View>
           )}
         </ScrollView>
@@ -266,40 +304,54 @@ export default function Businesses() {
         animationType="slide"
         onRequestClose={() => setAssignModal(null)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Assign Industry</Text>
+        <View style={s.overlay}>
+          <View style={s.sheet}>
+            <View style={s.sheetHeader}>
+              <View>
+                <Text style={s.sheetTitle}>Assign Industry</Text>
+                {assignModal && <Text style={s.sheetSub}>{assignModal.bizName}</Text>}
+              </View>
               <TouchableOpacity onPress={() => setAssignModal(null)}>
                 <MaterialIcons name="close" size={22} color="#64748b" />
               </TouchableOpacity>
             </View>
-            <Text style={styles.modalSub}>
-              Choose which industry this business belongs to.{'\n'}
-              This controls what services the business can offer.
-            </Text>
-            {INDUSTRY_OPTIONS.map(key => {
-              const meta   = INDUSTRY_META[key];
-              const isCurr = assignModal?.current === key;
+
+            <Text style={s.sheetHint}>Select the industry this business belongs to.</Text>
+
+            {Object.entries(INDUSTRY_META).map(([key, meta]) => {
+              const selected = assignPick === key;
               return (
                 <TouchableOpacity
                   key={key}
-                  style={[styles.modalOption, isCurr && styles.modalOptionActive]}
-                  onPress={() => assignModal && assignIndustry(assignModal.bizId, key)}
-                  disabled={assigning}
+                  style={[s.indOpt, selected && { borderColor: meta.color, backgroundColor: meta.color + '10' }]}
+                  onPress={() => setAssignPick(key)}
                   activeOpacity={0.8}
                 >
-                  <View style={[styles.modalOptionIcon, { backgroundColor: meta.bg }]}>
+                  <View style={[s.indOptIcon, { backgroundColor: meta.color + '18' }]}>
                     <MaterialIcons name={meta.icon} size={18} color={meta.color} />
                   </View>
-                  <Text style={[styles.modalOptionTxt, isCurr && { color: '#4f46e5', fontWeight: '800' }]}>
+                  <Text style={[s.indOptTxt, selected && { color: meta.color, fontWeight: '800' }]}>
                     {INDUSTRY_LABELS[key]}
                   </Text>
-                  {isCurr && <MaterialIcons name="check-circle" size={18} color="#4f46e5" />}
-                  {assigning && isCurr && <ActivityIndicator size="small" color="#4f46e5" />}
+                  <MaterialIcons
+                    name={selected ? 'radio-button-checked' : 'radio-button-unchecked'}
+                    size={20}
+                    color={selected ? meta.color : '#cbd5e1'}
+                  />
                 </TouchableOpacity>
               );
             })}
+
+            <TouchableOpacity
+              style={[s.saveBtn, assigning && { opacity: 0.6 }]}
+              onPress={saveAssign}
+              disabled={assigning}
+            >
+              {assigning
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <Text style={s.saveBtnTxt}>Save</Text>
+              }
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -307,69 +359,65 @@ export default function Businesses() {
   );
 }
 
-const styles = StyleSheet.create({
-  container:   { flex: 1, backgroundColor: '#f8fafc' },
-  header:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-  backBtn:     { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  refreshBtn:  { width: 36, height: 36, borderRadius: 10, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
-  center:      { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  content:     { padding: 16, gap: 14, paddingBottom: 40 },
+const s = StyleSheet.create({
+  container:    { flex: 1, backgroundColor: '#f8fafc' },
+  header:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+  backBtn:      { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  refreshBtn:   { width: 36, height: 36, borderRadius: 10, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' },
+  headerTitle:  { fontSize: 18, fontWeight: '800', color: '#0f172a' },
+  center:       { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  content:      { padding: 16, gap: 14, paddingBottom: 40 },
 
-  // Industry controls section
-  sectionCard:   { backgroundColor: '#fff', borderRadius: 20, padding: 16, borderWidth: 1, borderColor: '#e2e8f0', gap: 12 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  sectionTitle:  { fontSize: 15, fontWeight: '800', color: '#0f172a' },
-  sectionSub:    { fontSize: 12, color: '#64748b', fontWeight: '500', marginTop: -4 },
-  industryGrid:  { gap: 8 },
-  industryToggle: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12,
-    borderWidth: 1.5,
-  },
-  industryToggleOn:  { backgroundColor: '#4f46e5', borderColor: '#4f46e5' },
-  industryToggleOff: { backgroundColor: '#f8fafc', borderColor: '#e2e8f0' },
-  industryToggleTxt: { flex: 1, fontSize: 13, fontWeight: '700' },
-  onOffPill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
-  onPill:    { backgroundColor: '#ecfdf5' },
-  offPill:   { backgroundColor: '#f1f5f9' },
-  onOffTxt:  { fontSize: 10, fontWeight: '800' },
+  // Industry access section
+  sectionCard:  { backgroundColor: '#fff', borderRadius: 20, padding: 16, borderWidth: 1, borderColor: '#e2e8f0', gap: 10 },
+  sectionRow:   { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sectionTitle: { fontSize: 15, fontWeight: '800', color: '#0f172a' },
+  sectionSub:   { fontSize: 12, color: '#64748b', fontWeight: '500' },
+  gridWrap:     { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  tile:         { width: '47%', borderRadius: 16, borderWidth: 1.5, backgroundColor: '#fff', padding: 14, alignItems: 'center', gap: 8 },
+  tileIcon:     { width: 44, height: 44, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  tileLabel:    { fontSize: 12, fontWeight: '700', textAlign: 'center' },
+  badge:        { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 },
+  badgeDot:     { width: 6, height: 6, borderRadius: 999 },
+  badgeTxt:     { fontSize: 10, fontWeight: '800' },
 
   // Search
   searchWrap:  { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: '#e2e8f0' },
   searchInput: { flex: 1, fontSize: 14, color: '#0f172a', fontWeight: '500' },
 
   // Business cards
-  card:         { backgroundColor: '#fff', borderRadius: 20, padding: 16, borderWidth: 1, borderColor: '#e2e8f0', gap: 12 },
-  cardTop:      { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  cardIcon:     { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  bizName:      { fontSize: 15, fontWeight: '800', color: '#0f172a' },
-  industryRow:  { flexDirection: 'row', marginTop: 3 },
-  industryChip: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
-  industryChipTxt: { fontSize: 11, fontWeight: '700' },
-  statusDotWrap: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
-  statusDot:    { width: 7, height: 7, borderRadius: 999 },
-  statusTxt:    { fontSize: 11, fontWeight: '700' },
-  metaRow:      { flexDirection: 'row', gap: 14, flexWrap: 'wrap' },
-  metaItem:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  metaText:     { fontSize: 12, color: '#64748b', fontWeight: '500' },
-  actions:      { flexDirection: 'row', gap: 8, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#f1f5f9' },
-  assignBtn:    { flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: 10, backgroundColor: '#eef2ff' },
-  assignText:   { fontSize: 12, fontWeight: '700', color: '#4f46e5' },
-  removeBtn:    { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: 10, backgroundColor: '#fff1f2' },
-  removeText:   { fontSize: 12, fontWeight: '700', color: '#e11d48' },
-  emptyState:   { alignItems: 'center', paddingVertical: 60, gap: 8 },
-  emptyText:    { fontSize: 16, fontWeight: '700', color: '#64748b' },
-  emptySub:     { fontSize: 13, color: '#94a3b8', textAlign: 'center' },
+  card:        { backgroundColor: '#fff', borderRadius: 20, padding: 16, borderWidth: 1, borderColor: '#e2e8f0', gap: 12 },
+  cardTop:     { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  cardIcon:    { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  bizName:     { fontSize: 15, fontWeight: '800', color: '#0f172a' },
+  chipRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
+  chip:        { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
+  chipTxt:     { fontSize: 11, fontWeight: '700' },
+  statusWrap:  { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  statusDot:   { width: 7, height: 7, borderRadius: 999 },
+  statusTxt:   { fontSize: 11, fontWeight: '700' },
+  metaRow:     { flexDirection: 'row', gap: 14, flexWrap: 'wrap' },
+  metaItem:    { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  metaTxt:     { fontSize: 12, color: '#64748b', fontWeight: '500' },
+  actions:     { flexDirection: 'row', gap: 8, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#f1f5f9' },
+  assignBtn:   { flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: 10, backgroundColor: '#eef2ff' },
+  assignTxt:   { fontSize: 12, fontWeight: '700', color: '#4f46e5' },
+  removeBtn:   { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: 10, backgroundColor: '#fff1f2' },
+  removeTxt:   { fontSize: 12, fontWeight: '700', color: '#e11d48' },
+  emptyState:  { alignItems: 'center', paddingVertical: 60, gap: 8 },
+  emptyText:   { fontSize: 16, fontWeight: '700', color: '#64748b' },
+  emptySub:    { fontSize: 13, color: '#94a3b8', textAlign: 'center' },
 
-  // Assign industry modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-  modalSheet:   { backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24, gap: 10, paddingBottom: 40 },
-  modalHeader:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  modalTitle:   { fontSize: 18, fontWeight: '900', color: '#0f172a' },
-  modalSub:     { fontSize: 13, color: '#64748b', fontWeight: '500', lineHeight: 20, marginBottom: 6 },
-  modalOption:  { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 12, borderRadius: 14, borderWidth: 1.5, borderColor: '#e2e8f0' },
-  modalOptionActive: { borderColor: '#4f46e5', backgroundColor: '#eef2ff' },
-  modalOptionIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  modalOptionTxt:  { flex: 1, fontSize: 14, fontWeight: '600', color: '#0f172a' },
+  // Modal
+  overlay:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  sheet:       { backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24, gap: 10, paddingBottom: 40 },
+  sheetHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 },
+  sheetTitle:  { fontSize: 18, fontWeight: '900', color: '#0f172a' },
+  sheetSub:    { fontSize: 13, color: '#64748b', fontWeight: '600', marginTop: 2 },
+  sheetHint:   { fontSize: 13, color: '#64748b', fontWeight: '500' },
+  indOpt:      { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 12, borderRadius: 14, borderWidth: 1.5, borderColor: '#e2e8f0', marginBottom: 8 },
+  indOptIcon:  { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  indOptTxt:   { flex: 1, fontSize: 14, fontWeight: '600', color: '#0f172a' },
+  saveBtn:     { backgroundColor: '#4f46e5', borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 4 },
+  saveBtnTxt:  { fontSize: 15, fontWeight: '800', color: '#fff' },
 });

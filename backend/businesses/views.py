@@ -1,13 +1,21 @@
 from django.db.models import Q
+from django.core.mail import send_mail
+from django.conf import settings
 from rest_framework import generics, status, filters
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
-from .models import Business, BusinessRequest, IndustryControl, INDUSTRY_KEYS
-from .serializers import BusinessSerializer, BusinessRequestSerializer, IndustryControlSerializer
+from .models import Business, BusinessRequest, IndustryControl, Industry, IndustryBranch, INDUSTRY_KEYS
+from .serializers import (
+    BusinessSerializer, BusinessRequestSerializer,
+    IndustryControlSerializer, IndustrySerializer, IndustryBranchSerializer,
+)
 from accounts.permissions import IsAdminOrSuperAdmin, IsSuperAdmin
+from notifications.utils import create_notification
 
+
+# ─── Businesses ───────────────────────────────────────────────────────────────
 
 class BusinessListCreateView(generics.ListCreateAPIView):
     serializer_class   = BusinessSerializer
@@ -32,6 +40,69 @@ class BusinessDetailView(generics.RetrieveUpdateDestroyAPIView):
             return Business.objects.all()
         return Business.objects.filter(owner=user)
 
+
+# ─── Business Industries (multi-industry assignment) ──────────────────────────
+
+class BusinessIndustriesView(APIView):
+    """Super admin: get or replace the full set of industries for a business."""
+    permission_classes = [IsSuperAdmin]
+
+    def get(self, request, pk):
+        try:
+            biz = Business.objects.get(pk=pk)
+        except Business.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(IndustrySerializer(biz.industries.all(), many=True).data)
+
+    def put(self, request, pk):
+        try:
+            biz = Business.objects.get(pk=pk)
+        except Business.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        ids = request.data.get('industry_ids', [])
+        if not isinstance(ids, list):
+            return Response({'detail': 'industry_ids must be a list.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        industries = Industry.objects.filter(pk__in=ids)
+        biz.industries.set(industries)
+        biz.save()
+        return Response(IndustrySerializer(biz.industries.all(), many=True).data)
+
+
+# ─── Email helpers ────────────────────────────────────────────────────────────
+
+def _send_request_email(req, approved: bool):
+    if not req.email:
+        return
+    app_name = getattr(settings, 'DEFAULT_FROM_EMAIL', 'Smart Queue Management System')
+    if approved:
+        subject = f'Business Registration Approved — {req.business_name}'
+        body = (
+            f'Dear {req.contact_name},\n\n'
+            f'Great news! Your business registration for "{req.business_name}" has been approved.\n\n'
+            f'Your business is now active on the Smart Queue Management System. '
+            f'Customers can now find and use your services through the app.\n\n'
+            f'If you have any questions, please reach out to our support team.\n\n'
+            f'Best regards,\nSmart Queue Management System'
+        )
+    else:
+        subject = f'Business Registration Update — {req.business_name}'
+        body = (
+            f'Dear {req.contact_name},\n\n'
+            f'Thank you for your interest in the Smart Queue Management System.\n\n'
+            f'Unfortunately, we are unable to approve the registration for "{req.business_name}" at this time.\n\n'
+            f'If you believe this is an error or would like to provide more information, '
+            f'please contact our support team.\n\n'
+            f'Best regards,\nSmart Queue Management System'
+        )
+    try:
+        send_mail(subject, body, None, [req.email], fail_silently=True)
+    except Exception:
+        pass
+
+
+# ─── Business Requests ────────────────────────────────────────────────────────
 
 class BusinessRequestListCreateView(generics.ListCreateAPIView):
     serializer_class = BusinessRequestSerializer
@@ -62,19 +133,43 @@ class BusinessRequestApproveView(APIView):
         req.reviewed_by = request.user
         req.save()
 
-        # Create the Business record so it appears in All Businesses immediately.
-        # get_or_create prevents duplicates if approved more than once.
-        Business.objects.get_or_create(
+        biz, _ = Business.objects.get_or_create(
             name=req.business_name,
             defaults={
-                'industry': req.industry,
+                'industry': req.industry if req.industry in INDUSTRY_KEYS else '',
                 'email':    req.email,
                 'phone':    req.phone,
                 'status':   'active',
             },
         )
 
-        return Response(BusinessRequestSerializer(req).data)
+        # Try to link the requested industry to the business via the M2M too
+        try:
+            ind = Industry.objects.get(key=req.industry)
+            biz.industries.add(ind)
+        except Industry.DoesNotExist:
+            pass
+
+        _send_request_email(req, approved=True)
+
+        # In-app notification for the customer if they have an account
+        try:
+            from accounts.models import User
+            customer = User.objects.filter(email=req.email).first()
+            if customer:
+                create_notification(
+                    customer,
+                    'success',
+                    'Business Registration Approved!',
+                    f'Great news! Your business "{req.business_name}" has been approved and is now '
+                    f'active on the Smart Queue Management System.',
+                )
+        except Exception:
+            pass
+
+        data = BusinessRequestSerializer(req).data
+        data['business_id'] = biz.id
+        return Response(data)
 
 
 class BusinessRequestRejectView(APIView):
@@ -88,15 +183,124 @@ class BusinessRequestRejectView(APIView):
         req.status      = 'rejected'
         req.reviewed_by = request.user
         req.save()
+        _send_request_email(req, approved=False)
+
+        # In-app notification for the customer if they have an account
+        try:
+            from accounts.models import User
+            customer = User.objects.filter(email=req.email).first()
+            if customer:
+                create_notification(
+                    customer,
+                    'alert',
+                    'Business Registration Update',
+                    f'Your registration request for "{req.business_name}" could not be approved at this time. '
+                    f'Please contact support for more information.',
+                )
+        except Exception:
+            pass
+
         return Response(BusinessRequestSerializer(req).data)
 
+
+# ─── Industry CRUD ────────────────────────────────────────────────────────────
+
+class IndustryListCreateView(APIView):
+    """Super admin: list all dynamic industries; POST to add a new one."""
+    permission_classes = [IsSuperAdmin]
+
+    def get(self, request):
+        industries = Industry.objects.all()
+        return Response(IndustrySerializer(industries, many=True).data)
+
+    def post(self, request):
+        ser = IndustrySerializer(data=request.data)
+        if not ser.is_valid():
+            return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+        industry = ser.save()
+        return Response(IndustrySerializer(industry).data, status=status.HTTP_201_CREATED)
+
+
+class IndustryDetailView(APIView):
+    """Super admin: update or delete a single industry."""
+    permission_classes = [IsSuperAdmin]
+
+    def _get(self, pk):
+        try:
+            return Industry.objects.get(pk=pk)
+        except Industry.DoesNotExist:
+            return None
+
+    def patch(self, request, pk):
+        industry = self._get(pk)
+        if not industry:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        ser = IndustrySerializer(industry, data=request.data, partial=True)
+        if not ser.is_valid():
+            return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+        industry = ser.save()
+        return Response(IndustrySerializer(industry).data)
+
+    def delete(self, request, pk):
+        industry = self._get(pk)
+        if not industry:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if industry.is_builtin:
+            return Response({'detail': 'Built-in industries cannot be deleted.'}, status=status.HTTP_400_BAD_REQUEST)
+        industry.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ─── Industry Branches ────────────────────────────────────────────────────────
+
+class IndustryBranchListCreateView(APIView):
+    """Super admin: list branches for an industry; POST to add one."""
+    permission_classes = [IsSuperAdmin]
+
+    def _industry(self, pk):
+        try:
+            return Industry.objects.get(pk=pk)
+        except Industry.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+        industry = self._industry(pk)
+        if not industry:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(IndustryBranchSerializer(industry.branches.all(), many=True).data)
+
+    def post(self, request, pk):
+        industry = self._industry(pk)
+        if not industry:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        data = {**request.data, 'industry': industry.pk}
+        ser  = IndustryBranchSerializer(data=data)
+        if not ser.is_valid():
+            return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+        branch = ser.save(industry=industry)
+        return Response(IndustryBranchSerializer(branch).data, status=status.HTTP_201_CREATED)
+
+
+class IndustryBranchDetailView(APIView):
+    """Super admin: delete a branch from an industry."""
+    permission_classes = [IsSuperAdmin]
+
+    def delete(self, request, pk, branch_pk):
+        try:
+            branch = IndustryBranch.objects.get(pk=branch_pk, industry_id=pk)
+        except IndustryBranch.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        branch.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ─── Legacy Industry Controls (kept for backward compat) ──────────────────────
 
 class IndustryControlListView(APIView):
     """Super admin: list all industries with their visibility status."""
     permission_classes = [IsSuperAdmin]
 
     def get(self, request):
-        # Ensure all 6 industries have a control row
         for key in INDUSTRY_KEYS:
             IndustryControl.objects.get_or_create(industry=key, defaults={'is_visible': True})
         controls = IndustryControl.objects.all()
@@ -104,7 +308,7 @@ class IndustryControlListView(APIView):
 
 
 class IndustryControlToggleView(APIView):
-    """Super admin: toggle a single industry's visibility on/off."""
+    """Super admin: toggle a single legacy industry's visibility on/off."""
     permission_classes = [IsSuperAdmin]
 
     def patch(self, request, industry):
@@ -114,34 +318,38 @@ class IndustryControlToggleView(APIView):
             industry=industry,
             defaults={'is_visible': True},
         )
-        # Accept explicit value or just flip
         new_val = request.data.get('is_visible')
         ctrl.is_visible = new_val if isinstance(new_val, bool) else (not ctrl.is_visible)
         ctrl.save()
+
+        # Mirror toggle to the Industry model as well
+        try:
+            ind = Industry.objects.get(key=industry)
+            ind.is_visible = ctrl.is_visible
+            ind.save(update_fields=['is_visible'])
+        except Industry.DoesNotExist:
+            pass
+
         return Response(IndustryControlSerializer(ctrl).data)
 
+
+# ─── Customer-facing ──────────────────────────────────────────────────────────
 
 class VisibleIndustriesView(APIView):
     """Customer-facing: returns only industries the super admin has enabled."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # Ensure rows exist
-        for key in INDUSTRY_KEYS:
-            IndustryControl.objects.get_or_create(industry=key, defaults={'is_visible': True})
-
-        LABELS = {
-            'banking':    'Banking',
-            'healthcare': 'Healthcare',
-            'retail':     'Retail',
-            'government': 'Government',
-            'education':  'Education',
-            'corporate':  'Corporate',
-        }
-        visible = IndustryControl.objects.filter(is_visible=True).values_list('industry', flat=True)
+        industries = Industry.objects.filter(is_visible=True).order_by('label')
         return Response([
-            {'id': k, 'label': LABELS[k]}
-            for k in INDUSTRY_KEYS if k in visible
+            {
+                'id':    ind.key,
+                'key':   ind.key,
+                'label': ind.label,
+                'icon':  ind.icon,
+                'color': ind.color,
+            }
+            for ind in industries
         ])
 
 
@@ -157,7 +365,9 @@ class DirectoryView(APIView):
         industry = request.query_params.get('industry', '').strip()
         businesses = Business.objects.filter(status='active')
         if industry:
-            businesses = businesses.filter(industry=industry)
+            businesses = businesses.filter(
+                Q(industry=industry) | Q(industries__key=industry)
+            ).distinct()
 
         result = []
         for biz in businesses.order_by('name'):

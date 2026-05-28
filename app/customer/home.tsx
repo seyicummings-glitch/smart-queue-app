@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, StyleSheet, ScrollView,
-  TouchableOpacity, StatusBar, ActivityIndicator,
+  TouchableOpacity, StatusBar, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -224,6 +224,7 @@ export default function CustomerHome() {
 const [activeTicket, setActiveTicket] = useState<ActiveTicket | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading,      setLoading]      = useState(true);
+  const [refreshing,   setRefreshing]   = useState(false);
   const hasLoaded = useRef(false);
 
   const loadData = useCallback(async () => {
@@ -241,6 +242,7 @@ const [activeTicket, setActiveTicket] = useState<ActiveTicket | null>(null);
       hasLoaded.current = true;
       setLoading(false);
     }
+    setRefreshing(false);
   }, []);
 
   // Refresh everything on focus; poll the active ticket every 15s in the background
@@ -269,6 +271,13 @@ const [activeTicket, setActiveTicket] = useState<ActiveTicket | null>(null);
       <ScrollView
         contentContainerStyle={s.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => { setRefreshing(true); loadData(); }}
+            colors={['#2563eb']}
+          />
+        }
       >
         {/* Greeting */}
         <View style={s.greetRow}>

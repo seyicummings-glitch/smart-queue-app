@@ -28,6 +28,8 @@ const INDUSTRY_META: Record<string, { label: string; icon: IconName; color: stri
   corporate:  { label: 'Corporate Office',    icon: 'business',        color: '#0d9488', bg: '#f0fdfa' },
 };
 
+type ApiIndustry = { key: string; label: string; icon: string; color: string };
+
 const BRANCHES: Record<string, Branch[]> = {
   banking: [
     { id: 'b1', name: 'Manhattan Financial Center', address: '123 Wall St, New York',      queue: 1 },
@@ -144,28 +146,51 @@ export default function CustomerServiceList() {
   const { showToast } = useNotifications();
 
   const id       = (industryId ?? 'banking').toLowerCase();
-  const meta     = INDUSTRY_META[id] ?? INDUSTRY_META.banking;
-  const services = SERVICES[id] ?? SERVICES.banking;
+  const staticMeta = INDUSTRY_META[id];
+  const services   = SERVICES[id] ?? SERVICES.corporate;
 
-  const [step,          setStep]          = useState<Step>('service');
-  const [service,       setService]       = useState<Service | null>(null);
-  const [branch,        setBranch]        = useState<Branch | null>(null);
-  const [joining,       setJoining]       = useState(false);
-  const [dbBranches,    setDbBranches]    = useState<Branch[]>([]);
+  const [step,           setStep]          = useState<Step>('service');
+  const [service,        setService]       = useState<Service | null>(null);
+  const [branch,         setBranch]        = useState<Branch | null>(null);
+  const [joining,        setJoining]       = useState(false);
+  const [dbBranches,     setDbBranches]    = useState<Branch[]>([]);
   const [loadingBranches, setLoadingBranches] = useState(true);
-  const [branchCounts,  setBranchCounts]  = useState<Record<string, number> | null>(null);
-  const [loadingCounts, setLoadingCounts] = useState(false);
+  const [branchCounts,   setBranchCounts]  = useState<Record<string, number> | null>(null);
+  const [loadingCounts,  setLoadingCounts] = useState(false);
+  const [apiMeta,        setApiMeta]       = useState<ApiIndustry | null>(null);
+
+  // Resolved meta: prefer API data for dynamic industries, fall back to static
+  const meta = apiMeta
+    ? {
+        label: apiMeta.label,
+        icon:  (apiMeta.icon ?? 'business') as IconName,
+        color: apiMeta.color ?? '#0d9488',
+        bg:    (apiMeta.color ?? '#0d9488') + '18',
+      }
+    : staticMeta ?? { label: id, icon: 'business' as IconName, color: '#0d9488', bg: '#f0fdfa' };
 
   useEffect(() => {
+    // Load branches from DB
     api.get<{ id: number; name: string; address: string }[]>('/branches/').then(({ data }) => {
       if (data && data.length > 0) {
         setDbBranches(data.map(b => ({ id: String(b.id), name: b.name, address: b.address ?? '' })));
       }
       setLoadingBranches(false);
     });
-  }, []);
 
-  const branches = dbBranches.length > 0 ? dbBranches : (BRANCHES[id] ?? BRANCHES.banking);
+    // Load industry meta from API for dynamic industries
+    if (!staticMeta) {
+      api.get<{ key: string; label: string; icon: string; color: string }[]>('/businesses/visible-industries/')
+        .then(({ data }) => {
+          if (data) {
+            const found = data.find((i: any) => i.key === id);
+            if (found) setApiMeta(found);
+          }
+        });
+    }
+  }, [id]);
+
+  const branches = dbBranches.length > 0 ? dbBranches : (BRANCHES[id] ?? BRANCHES.corporate);
   const [existingTicket,   setExistingTicket]   = useState<QueueTicketResponse | null>(null);
   const [checkingTicket,   setCheckingTicket]   = useState(false);
   const [cancellingTicket, setCancellingTicket] = useState(false);
@@ -175,9 +200,9 @@ export default function CustomerServiceList() {
   // "Join Queue" appears automatically — no manual refresh needed.
   useEffect(() => {
     if (!existingTicket) return;
-    const id = existingTicket.id;
+    const ticketId = existingTicket.id;
     const interval = setInterval(async () => {
-      const { data } = await api.get<QueueTicketResponse>(`/queues/${id}/`);
+      const { data } = await api.get<QueueTicketResponse>(`/queues/${ticketId}/`);
       // Card clears as soon as ticket is called, served, completed, or cancelled
       const done = !data || ['called', 'serving', 'completed', 'cancelled', 'missed'].includes(data.status);
       if (done) {

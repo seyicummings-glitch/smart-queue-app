@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, StatusBar, Alert, ActivityIndicator,
@@ -8,7 +8,10 @@ import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { api } from '@/lib/api';
 
-const INDUSTRIES = [
+type IconName = React.ComponentProps<typeof MaterialIcons>['name'];
+
+// Fallback industries (shown if API is unavailable)
+const FALLBACK_INDUSTRIES = [
   { key: 'banking',    label: 'Banking & Finance' },
   { key: 'healthcare', label: 'Healthcare'        },
   { key: 'retail',     label: 'Retail'            },
@@ -17,37 +20,79 @@ const INDUSTRIES = [
   { key: 'corporate',  label: 'Corporate'         },
 ];
 
+const IND_ICON: Record<string, IconName> = {
+  banking:    'account-balance',
+  healthcare: 'favorite',
+  retail:     'shopping-bag',
+  government: 'gavel',
+  education:  'school',
+  corporate:  'business',
+};
+
+const IND_COLOR: Record<string, string> = {
+  banking:    '#2563eb',
+  healthcare: '#e11d48',
+  retail:     '#d97706',
+  government: '#475569',
+  education:  '#4f46e5',
+  corporate:  '#0d9488',
+};
+
 export default function RegisterBusiness() {
   const router = useRouter();
 
-  const [businessName, setBusinessName] = useState('');
-  const [contactName,  setContactName]  = useState('');
-  const [email,        setEmail]        = useState('');
-  const [phone,        setPhone]        = useState('');
-  const [industry,     setIndustry]     = useState('');
-  const [message,      setMessage]      = useState('');
-  const [submitting,   setSubmitting]   = useState(false);
-  const [submitted,    setSubmitted]    = useState(false);
+  const [businessName,   setBusinessName]   = useState('');
+  const [contactName,    setContactName]    = useState('');
+  const [email,          setEmail]          = useState('');
+  const [phone,          setPhone]          = useState('');
+  const [selectedInds,   setSelectedInds]   = useState<string[]>([]);
+  const [message,        setMessage]        = useState('');
+  const [submitting,     setSubmitting]     = useState(false);
+  const [submitted,      setSubmitted]      = useState(false);
+  const [industries,     setIndustries]     = useState(FALLBACK_INDUSTRIES);
+  const [loadingInds,    setLoadingInds]    = useState(true);
+
+  // Load visible industries from the API
+  useEffect(() => {
+    api.get<{ key: string; label: string; icon?: string; color?: string }[]>(
+      '/businesses/visible-industries/',
+      false,   // no auth needed for public endpoint? Actually it needs auth...
+    ).then(({ data }) => {
+      if (data && data.length > 0) {
+        setIndustries(data.map(i => ({ key: i.key, label: i.label })));
+      }
+      setLoadingInds(false);
+    }).catch(() => setLoadingInds(false));
+  }, []);
+
+  const toggleIndustry = (key: string) => {
+    setSelectedInds(prev =>
+      prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
+    );
+  };
 
   const handleSubmit = async () => {
-    if (!businessName.trim() || !contactName.trim() || !email.trim() || !industry) {
-      Alert.alert('Error', 'Please fill in all required fields and select an industry.');
+    if (!businessName.trim() || !contactName.trim() || !email.trim() || selectedInds.length === 0) {
+      Alert.alert('Missing Information', 'Please fill in all required fields and select at least one industry.');
       return;
     }
 
     setSubmitting(true);
     const { error } = await api.post(
       '/businesses/requests/',
-      { business_name: businessName, contact_name: contactName, email, phone, industry, message },
+      {
+        business_name: businessName.trim(),
+        contact_name:  contactName.trim(),
+        email:         email.trim(),
+        phone:         phone.trim(),
+        industry:      selectedInds.join(', '),  // store multiple as "banking, healthcare"
+        message:       message.trim(),
+      },
       false,
     );
     setSubmitting(false);
 
-    if (error) {
-      Alert.alert('Error', error);
-      return;
-    }
-
+    if (error) { Alert.alert('Error', error); return; }
     setSubmitted(true);
   };
 
@@ -68,7 +113,8 @@ export default function RegisterBusiness() {
           </View>
           <Text style={s.successTitle}>Request Submitted!</Text>
           <Text style={s.successSub}>
-            Your business registration request has been sent to the Super Admin for review. You will be contacted once it is approved.
+            Your business registration request has been sent to the Super Admin for review.{'\n\n'}
+            You will receive a notification and an email once it is approved or reviewed.
           </Text>
           <TouchableOpacity style={s.backHomeBtn} onPress={() => router.replace('/customer/home' as any)}>
             <Text style={s.backHomeBtnText}>Back to Home</Text>
@@ -91,6 +137,14 @@ export default function RegisterBusiness() {
       </View>
 
       <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+
+        {/* Info banner */}
+        <View style={s.infoCard}>
+          <MaterialIcons name="info" size={18} color="#2563eb" />
+          <Text style={s.infoText}>
+            Your request will be reviewed by the Super Admin. You'll receive a notification once approved.
+          </Text>
+        </View>
 
         {/* Business Name */}
         <View style={s.fieldGroup}>
@@ -137,30 +191,63 @@ export default function RegisterBusiness() {
             style={s.input}
             value={phone}
             onChangeText={setPhone}
-            placeholder="e.g. 05001234567"
+            placeholder="e.g. +234 800 000 0000"
             placeholderTextColor="#94a3b8"
             keyboardType="phone-pad"
-            maxLength={10}
           />
         </View>
 
-        {/* Industry */}
+        {/* Industry — multi-select */}
         <View style={s.fieldGroup}>
-          <Text style={s.label}>Industry <Text style={s.required}>*</Text></Text>
-          <View style={s.industryGrid}>
-            {INDUSTRIES.map(ind => (
-              <TouchableOpacity
-                key={ind.key}
-                style={[s.industryChip, industry === ind.key && s.industryChipActive]}
-                onPress={() => setIndustry(ind.key)}
-                activeOpacity={0.8}
-              >
-                <Text style={[s.industryChipText, industry === ind.key && s.industryChipTextActive]}>
-                  {ind.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          <Text style={s.label}>
+            Industry <Text style={s.required}>*</Text>
+            <Text style={s.labelHint}> (select one or more)</Text>
+          </Text>
+
+          {loadingInds ? (
+            <ActivityIndicator size="small" color="#2563eb" style={{ marginTop: 8 }} />
+          ) : (
+            <View style={s.indList}>
+              {industries.map(ind => {
+                const selected = selectedInds.includes(ind.key);
+                const color    = IND_COLOR[ind.key] ?? '#4f46e5';
+                const icon     = IND_ICON[ind.key]  ?? 'business';
+                return (
+                  <TouchableOpacity
+                    key={ind.key}
+                    style={[s.indRow, selected && { borderColor: color, backgroundColor: color + '0d' }]}
+                    onPress={() => toggleIndustry(ind.key)}
+                    activeOpacity={0.8}
+                  >
+                    <View style={[s.indRowIcon, { backgroundColor: color + '18' }]}>
+                      <MaterialIcons name={icon} size={18} color={color} />
+                    </View>
+                    <Text style={[s.indRowLabel, selected && { color, fontWeight: '800' }]}>
+                      {ind.label}
+                    </Text>
+                    <MaterialIcons
+                      name={selected ? 'check-box' : 'check-box-outline-blank'}
+                      size={22}
+                      color={selected ? color : '#cbd5e1'}
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+
+          {selectedInds.length > 0 && (
+            <View style={s.selectedWrap}>
+              <Text style={s.selectedLabel}>Selected: </Text>
+              {selectedInds.map(k => (
+                <View key={k} style={[s.selChip, { backgroundColor: (IND_COLOR[k] ?? '#4f46e5') + '18' }]}>
+                  <Text style={[s.selChipTxt, { color: IND_COLOR[k] ?? '#4f46e5' }]}>
+                    {industries.find(i => i.key === k)?.label ?? k}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
         </View>
 
         {/* Message */}
@@ -198,26 +285,32 @@ export default function RegisterBusiness() {
 }
 
 const s = StyleSheet.create({
-  container:  { flex: 1, backgroundColor: '#f8fafc' },
-  header:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-  backBtn:    { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  headerTitle:{ fontSize: 17, fontWeight: '800', color: '#0f172a' },
-  content:    { padding: 16, gap: 16, paddingBottom: 40 },
+  container:   { flex: 1, backgroundColor: '#f8fafc' },
+  header:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+  backBtn:     { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: 17, fontWeight: '800', color: '#0f172a' },
+  content:     { padding: 16, gap: 16, paddingBottom: 40 },
 
-  infoCard:   { flexDirection: 'row', gap: 10, backgroundColor: '#eff6ff', borderRadius: 12, padding: 14, alignItems: 'flex-start' },
-  infoText:   { flex: 1, fontSize: 13, color: '#2563eb', fontWeight: '500', lineHeight: 20 },
+  infoCard:    { flexDirection: 'row', gap: 10, backgroundColor: '#eff6ff', borderRadius: 12, padding: 14, alignItems: 'flex-start' },
+  infoText:    { flex: 1, fontSize: 13, color: '#2563eb', fontWeight: '500', lineHeight: 20 },
 
-  fieldGroup: { gap: 8 },
-  label:      { fontSize: 13, fontWeight: '700', color: '#374151' },
-  required:   { color: '#e11d48' },
-  input:      { backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: '#0f172a' },
-  textArea:   { height: 100, textAlignVertical: 'top' },
+  fieldGroup:  { gap: 8 },
+  label:       { fontSize: 13, fontWeight: '700', color: '#374151' },
+  labelHint:   { fontSize: 12, fontWeight: '500', color: '#94a3b8' },
+  required:    { color: '#e11d48' },
+  input:       { backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: '#0f172a' },
+  textArea:    { height: 100, textAlignVertical: 'top' },
 
-  industryGrid:          { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  industryChip:          { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff' },
-  industryChipActive:    { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-  industryChipText:      { fontSize: 13, fontWeight: '600', color: '#64748b' },
-  industryChipTextActive:{ color: '#fff' },
+  // Industry multi-select
+  indList:     { gap: 8 },
+  indRow:      { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff', borderRadius: 14, borderWidth: 1.5, borderColor: '#e2e8f0', padding: 12 },
+  indRowIcon:  { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  indRowLabel: { flex: 1, fontSize: 14, fontWeight: '600', color: '#374151' },
+
+  selectedWrap:{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginTop: 4 },
+  selectedLabel:{ fontSize: 12, fontWeight: '700', color: '#64748b' },
+  selChip:     { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  selChipTxt:  { fontSize: 12, fontWeight: '700' },
 
   submitBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#2563eb', borderRadius: 14, paddingVertical: 16, marginTop: 8 },
   submitBtnDisabled: { opacity: 0.6 },

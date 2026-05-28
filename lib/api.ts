@@ -185,6 +185,9 @@ export const api = {
   patch:  <T = unknown>(path: string, body?: Record<string, unknown>, auth = true) =>
     apiRequest<T>('PATCH', path, body, auth),
 
+  put:    <T = unknown>(path: string, body?: Record<string, unknown>, auth = true) =>
+    apiRequest<T>('PUT', path, body, auth),
+
   delete: <T = unknown>(path: string, auth = true) =>
     apiRequest<T>('DELETE', path, undefined, auth),
 };

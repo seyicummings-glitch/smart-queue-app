@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
-  TouchableOpacity, StatusBar, ActivityIndicator,
+  TouchableOpacity, StatusBar, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -79,9 +79,10 @@ function NotificationCard({ item, onRead, onDismiss }: {
 }
 
 export default function NotificationsScreen() {
-  const [tab,    setTab]    = useState<'all' | 'unread'>('all');
-  const [items,  setItems]  = useState<Notification[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [tab,        setTab]        = useState<'all' | 'unread'>('all');
+  const [items,      setItems]      = useState<Notification[]>([]);
+  const [loading,    setLoading]    = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const { setUnreadCount } = useNotifications();
 
   const loadNotifications = useCallback(async () => {
@@ -91,7 +92,13 @@ export default function NotificationsScreen() {
       setItems(list);
     }
     setLoading(false);
+    setRefreshing(false);
   }, []);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadNotifications();
+  }, [loadNotifications]);
 
   useEffect(() => {
     loadNotifications();
@@ -121,7 +128,11 @@ export default function NotificationsScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
       <SQMSHeader />
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#2563eb']} />}
+      >
         <View style={styles.pageHeader}>
           <View style={styles.pageHeaderRow}>
             <View>

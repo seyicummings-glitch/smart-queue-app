@@ -13,6 +13,40 @@ INDUSTRY_CHOICES = [
 INDUSTRY_KEYS = [k for k, _ in INDUSTRY_CHOICES]
 
 
+class Industry(models.Model):
+    """Dynamically managed industry list — super admin can add/remove."""
+    key        = models.SlugField(max_length=50, unique=True)
+    label      = models.CharField(max_length=100)
+    icon       = models.CharField(max_length=50, default='business')
+    color      = models.CharField(max_length=20, default='#6B7280')
+    is_visible = models.BooleanField(default=True)
+    is_builtin = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = 'industries'
+        ordering = ['label']
+
+    def __str__(self):
+        return self.label
+
+
+class IndustryBranch(models.Model):
+    """Admin-managed branch locations within an industry."""
+    industry   = models.ForeignKey(Industry, on_delete=models.CASCADE, related_name='branches')
+    name       = models.CharField(max_length=200)
+    address    = models.TextField(blank=True)
+    phone      = models.CharField(max_length=20, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return f'{self.name} ({self.industry.label})'
+
+
 class Business(models.Model):
     PLANS = [
         ('basic',      'Basic'),
@@ -26,7 +60,8 @@ class Business(models.Model):
     ]
 
     name       = models.CharField(max_length=200)
-    industry   = models.CharField(max_length=50, choices=INDUSTRY_CHOICES)
+    industry   = models.CharField(max_length=50, choices=INDUSTRY_CHOICES, blank=True)
+    industries = models.ManyToManyField(Industry, blank=True, related_name='businesses')
     plan       = models.CharField(max_length=20, choices=PLANS, default='basic')
     status     = models.CharField(max_length=20, choices=STATUS, default='active')
     owner      = models.ForeignKey(
@@ -57,7 +92,7 @@ class BusinessRequest(models.Model):
     ]
 
     business_name = models.CharField(max_length=200)
-    industry      = models.CharField(max_length=50, choices=INDUSTRY_CHOICES)
+    industry      = models.CharField(max_length=100)
     contact_name  = models.CharField(max_length=150)
     email         = models.EmailField()
     phone         = models.CharField(max_length=20, blank=True)
@@ -80,7 +115,7 @@ class BusinessRequest(models.Model):
 
 
 class IndustryControl(models.Model):
-    """Super-admin toggle — controls which industries customers can see and use."""
+    """Super-admin toggle — controls which of the 6 built-in industries customers can see."""
     industry   = models.CharField(max_length=50, choices=INDUSTRY_CHOICES, unique=True)
     is_visible = models.BooleanField(default=True)
     updated_at = models.DateTimeField(auto_now=True)
