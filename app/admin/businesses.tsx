@@ -155,8 +155,11 @@ export default function Businesses() {
           <MaterialIcons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
         <Text style={s.headerTitle}>All Businesses</Text>
-        <TouchableOpacity style={s.refreshBtn} onPress={onRefresh}>
-          <MaterialIcons name="refresh" size={22} color="#64748b" />
+        <TouchableOpacity style={s.refreshBtn} onPress={onRefresh} disabled={refreshing}>
+          {refreshing
+            ? <ActivityIndicator size="small" color="#059669" />
+            : <MaterialIcons name="refresh" size={22} color="#64748b" />
+          }
         </TouchableOpacity>
       </View>
 

@@ -246,9 +246,15 @@ export default function CustomerQueueStatus() {
           <MaterialIcons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Queue Status</Text>
-        {/* Refresh button */}
-        <TouchableOpacity style={styles.refreshBtn} onPress={fetchTicket}>
-          <MaterialIcons name="refresh" size={20} color="#64748b" />
+        <TouchableOpacity
+          style={styles.refreshBtn}
+          onPress={fetchTicket}
+          disabled={loading}
+        >
+          {loading
+            ? <ActivityIndicator size="small" color="#2563eb" />
+            : <MaterialIcons name="refresh" size={20} color="#64748b" />
+          }
         </TouchableOpacity>
       </View>
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  StatusBar, Alert, ActivityIndicator, Modal,
+  StatusBar, Alert, ActivityIndicator, Modal, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -50,6 +50,7 @@ export default function BusinessRequests() {
   const [requests,   setReqs]      = useState<BusinessRequest[]>([]);
   const [industries, setIndustries] = useState<Industry[]>([]);
   const [loading,    setLoading]   = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Post-approval industry assignment modal
   const [assignModal,  setAssignModal]  = useState<{ bizId: number; bizName: string } | null>(null);
@@ -65,6 +66,7 @@ export default function BusinessRequests() {
     setReqs(list);
     setIndustries(Array.isArray(indRes.data) ? indRes.data : []);
     setLoading(false);
+    setRefreshing(false);
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
@@ -150,8 +152,15 @@ export default function BusinessRequests() {
             <Text style={styles.headerSub}>{pendingCount} pending review</Text>
           )}
         </View>
-        <TouchableOpacity style={styles.backBtn} onPress={fetchAll}>
-          <MaterialIcons name="refresh" size={22} color="#64748b" />
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => { setRefreshing(true); fetchAll(); }}
+          disabled={refreshing}
+        >
+          {refreshing
+            ? <ActivityIndicator size="small" color="#4f46e5" />
+            : <MaterialIcons name="refresh" size={22} color="#64748b" />
+          }
         </TouchableOpacity>
       </View>
 
@@ -185,7 +194,17 @@ export default function BusinessRequests() {
           <ActivityIndicator size="large" color="#4f46e5" />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => { setRefreshing(true); fetchAll(); }}
+              colors={['#4f46e5']}
+            />
+          }
+        >
           {filtered.map(req => (
             <View key={req.id} style={styles.reqCard}>
               <View style={styles.reqHeader}>

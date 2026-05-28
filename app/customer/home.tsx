@@ -285,8 +285,15 @@ const [activeTicket, setActiveTicket] = useState<ActiveTicket | null>(null);
             <Text style={s.greetText}>{greeting(user?.full_name ?? 'there')}</Text>
             <Text style={s.greetSub}>Here's your queue overview</Text>
           </View>
-          <TouchableOpacity style={s.refreshBtn} onPress={loadData}>
-            <MaterialIcons name="refresh" size={20} color="#64748b" />
+          <TouchableOpacity
+            style={s.refreshBtn}
+            onPress={() => { setRefreshing(true); loadData(); }}
+            disabled={refreshing}
+          >
+            {refreshing
+              ? <ActivityIndicator size="small" color="#2563eb" />
+              : <MaterialIcons name="refresh" size={20} color="#64748b" />
+            }
           </TouchableOpacity>
         </View>
 
