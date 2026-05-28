@@ -251,8 +251,22 @@ class EmployeeDetailView(generics.RetrieveUpdateDestroyAPIView):
         return qs
 
     def perform_destroy(self, instance):
-        # Delete related OTP records first to avoid FK constraint errors
+        from businesses.models import BusinessRequest, Business
+        from django.contrib.admin.models import LogEntry
+
+        # Nullify FK references that should be kept
+        BusinessRequest.objects.filter(reviewed_by=instance).update(reviewed_by=None)
+        Business.objects.filter(owner=instance).update(owner=None)
+
+        # Delete all records owned by this user
         EmailOTP.objects.filter(user=instance).delete()
+        instance.groups.clear()
+        instance.user_permissions.clear()
+        try:
+            LogEntry.objects.filter(user=instance).delete()
+        except Exception:
+            pass
+
         instance.delete()
 
 
