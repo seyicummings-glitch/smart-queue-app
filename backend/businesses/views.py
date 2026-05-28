@@ -55,6 +55,9 @@ class BusinessIndustriesView(APIView):
         return Response(IndustrySerializer(biz.industries.all(), many=True).data)
 
     def put(self, request, pk):
+        return self.post(request, pk)
+
+    def post(self, request, pk):
         try:
             biz = Business.objects.get(pk=pk)
         except Business.DoesNotExist:
@@ -66,7 +69,6 @@ class BusinessIndustriesView(APIView):
 
         industries = Industry.objects.filter(pk__in=ids)
         biz.industries.set(industries)
-        biz.save()
         return Response(IndustrySerializer(biz.industries.all(), many=True).data)
 
 

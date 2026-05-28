@@ -126,9 +126,18 @@ export async function apiRequest<T = unknown>(
 
     if (res.status === 401 && auth) {
       const newToken = await refreshAccessToken();
-      if (!newToken) return { data: null, error: 'Session expired. Please log in again.' };
+      if (!newToken) {
+        clearCache();
+        return { data: null, error: 'Session expired. Please log in again.' };
+      }
       headers['Authorization'] = `Bearer ${newToken}`;
       res = await makeRequest();
+      // Still 401 after refresh — clear everything so user is prompted to re-login
+      if (res.status === 401) {
+        await clearTokens();
+        clearCache();
+        return { data: null, error: 'Session expired. Please log in again.' };
+      }
     }
 
     if (res.status === 204) return { data: null as unknown as T, error: null };

@@ -118,7 +118,7 @@ export default function BusinessRequests() {
   const saveAssignment = async () => {
     if (!assignModal) return;
     setAssigning(true);
-    const { error } = await api.put(`/businesses/${assignModal.bizId}/industries/`, {
+    const { error } = await api.post(`/businesses/${assignModal.bizId}/industries/`, {
       industry_ids: selectedIds,
     });
     setAssigning(false);
