@@ -218,6 +218,18 @@ class EmployeeListCreateView(generics.ListCreateAPIView):
             qs = qs.filter(business=user.business)
         return qs
 
+    def post(self, request, *args, **kwargs):
+        email = (request.data.get('email') or '').strip().lower()
+        existing = User.objects.filter(email__iexact=email).first()
+        if existing:
+            # User exists (maybe as customer) — promote & update instead of failing
+            serializer = EmployeeSerializer(existing, data=request.data, partial=True)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return super().post(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         user = self.request.user
         if user.role == 'admin' and 'business' not in serializer.validated_data:

@@ -503,7 +503,7 @@ function AssignmentWizard({
 export default function EmployeeManagement() {
   const router = useRouter();
   const { user: currentUser } = useAuth();
-  const isSuperAdmin = currentUser?.role === 'superadmin';
+  const isSuperAdmin = currentUser?.role === 'super_admin';
 
   const [employees,   setEmployees]   = useState<Employee[]>([]);
   const [backendSvcs, setBackendSvcs] = useState<BackendService[]>([]);
