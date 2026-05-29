@@ -252,18 +252,22 @@ class EmployeeListCreateView(generics.ListCreateAPIView):
         user = self.request.user
         qs   = User.objects.exclude(role='customer').order_by('-created_at')
         if user.role == 'admin':
-            qs = qs.filter(business=user.business)
+            from django.db.models import Q
+            qs = qs.filter(Q(business=user.business) | Q(business__isnull=True))
         return qs
 
     def post(self, request, *args, **kwargs):
         email = (request.data.get('email') or '').strip().lower()
         existing = User.objects.filter(email__iexact=email).first()
         if existing:
-            # User exists — promote role/counter/services but NEVER touch their password
             data = {k: v for k, v in request.data.items() if k != 'password'}
             serializer = EmployeeSerializer(existing, data=data, partial=True)
             if not serializer.is_valid():
                 return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            # Also link to admin's business if not already set
+            admin = self.request.user
+            if admin.role == 'admin' and not existing.business:
+                existing.business = admin.business
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
         return super().post(request, *args, **kwargs)
