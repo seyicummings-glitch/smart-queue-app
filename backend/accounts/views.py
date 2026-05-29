@@ -1,6 +1,8 @@
 import random
 import os
-from django.core.mail import send_mail
+import json
+import urllib.request
+import base64
 from django.conf import settings
 from rest_framework import status, generics, filters
 from rest_framework.views import APIView
@@ -21,21 +23,57 @@ def get_tokens(user):
     }
 
 
+def _mailjet_send(to_email, to_name, subject, body):
+    api_key    = os.environ.get('MAILJET_API_KEY', '')
+    secret_key = os.environ.get('MAILJET_SECRET_KEY', '')
+    from_raw   = getattr(settings, 'DEFAULT_FROM_EMAIL', 'SQMS <noreply@sqms.com>')
+
+    if not api_key or not secret_key:
+        print(f"[EMAIL] To:{to_email} | {subject}\n{body}")
+        return
+
+    if '<' in from_raw:
+        from_name = from_raw.split('<')[0].strip()
+        from_addr = from_raw.split('<')[1].rstrip('>')
+    else:
+        from_name, from_addr = 'SQMS', from_raw
+
+    payload = json.dumps({
+        "Messages": [{
+            "From": {"Email": from_addr, "Name": from_name},
+            "To":   [{"Email": to_email,  "Name": to_name}],
+            "Subject":  subject,
+            "TextPart": body,
+        }]
+    }).encode()
+
+    creds = base64.b64encode(f"{api_key}:{secret_key}".encode()).decode()
+    req = urllib.request.Request(
+        'https://api.mailjet.com/v3.1/send',
+        data=payload,
+        headers={'Content-Type': 'application/json', 'Authorization': f'Basic {creds}'},
+        method='POST',
+    )
+    try:
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass
+
+
 def _send_otp_email(user):
     otp = str(random.randint(100000, 999999))
     EmailOTP.objects.create(user=user, otp=otp)
-    send_mail(
+    _mailjet_send(
+        to_email=user.email,
+        to_name=user.full_name,
         subject='Your Smart Queue Management System Email Verification Code',
-        message=(
+        body=(
             f'Hi {user.full_name},\n\n'
-            f'Your Smart Queue Management System email verification code is:\n\n'
+            f'Your verification code is:\n\n'
             f'  {otp}\n\n'
             f'Enter this code in the app within 10 minutes.\n\n'
-            f'If you did not create a Smart Queue Management System account, please ignore this email.'
+            f'If you did not create an SQMS account, ignore this email.'
         ),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[user.email],
-        fail_silently=True,
     )
 
 
@@ -139,19 +177,17 @@ class PasswordResetRequestView(APIView):
         otp = str(random.randint(100000, 999999))
         EmailOTP.objects.create(user=user, otp=otp)
 
-        send_mail(
+        _mailjet_send(
+            to_email=user.email,
+            to_name=user.full_name,
             subject='Password Reset Code — Smart Queue Management System',
-            message=(
+            body=(
                 f'Hi {user.full_name},\n\n'
-                f'You requested a password reset for your Smart Queue Management System account.\n\n'
                 f'Your password reset code is:\n\n'
                 f'  {otp}\n\n'
-                f'Enter this code in the app within 10 minutes to reset your password.\n\n'
-                f'If you did not request a password reset, please ignore this email.'
+                f'Enter this code in the app within 10 minutes.\n\n'
+                f'If you did not request a reset, ignore this email.'
             ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=True,
         )
         return Response({'detail': 'If this email is registered, a reset code has been sent.'})
 
