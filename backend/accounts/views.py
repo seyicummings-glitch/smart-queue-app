@@ -1,4 +1,5 @@
 import random
+import os
 from django.core.mail import send_mail
 from django.conf import settings
 from rest_framework import status, generics, filters
@@ -303,3 +304,30 @@ class ChangePasswordView(APIView):
         request.user.set_password(new_pw)
         request.user.save(update_fields=['password'])
         return Response({'detail': 'Password changed successfully.'})
+
+
+# ── TEMPORARY: emergency direct password reset (no email needed) ──────────────
+# Protected by a secret token stored in the EMERGENCY_TOKEN env variable.
+# Remove this view once the account is recovered.
+class EmergencyResetView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        secret   = os.environ.get('EMERGENCY_TOKEN', '')
+        token    = request.data.get('token', '')
+        email    = request.data.get('email', '').strip()
+        password = request.data.get('password', '').strip()
+
+        if not secret or token != secret:
+            return Response({'detail': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
+        if not email or not password:
+            return Response({'detail': 'Email and password required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        user.set_password(password)
+        user.email_verified = True
+        user.save(update_fields=['password', 'email_verified'])
+        return Response({'detail': 'Password updated. Log in now.'})

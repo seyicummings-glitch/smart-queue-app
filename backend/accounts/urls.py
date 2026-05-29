@@ -7,6 +7,7 @@ from .views import (
     ChangePasswordView,
     EmployeeListCreateView, EmployeeDetailView,
     MyCounterView,
+    EmergencyResetView,
 )
 
 urlpatterns = [
@@ -28,4 +29,6 @@ urlpatterns = [
     # Employee management
     path('employees/',           EmployeeListCreateView.as_view(), name='employee-list'),
     path('employees/<int:pk>/',  EmployeeDetailView.as_view(),     name='employee-detail'),
+    # TEMPORARY — remove after account recovery
+    path('emergency-reset/',     EmergencyResetView.as_view(),     name='emergency-reset'),
 ]
