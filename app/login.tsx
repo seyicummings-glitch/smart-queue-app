@@ -436,7 +436,7 @@ function getPasswordStrength(password: string): { level: number; label: string; 
 function friendlyError(error: string): string {
   const e = error.toLowerCase();
   if (e.includes('timed out') || e.includes('network') || e.includes('connect') || e.includes('530') || e.includes('502') || e.includes('fetch') || e.includes('failed to fetch')) {
-    return 'Cannot reach the server. Make sure Django is running and the tunnel is active.';
+    return 'Connection failed. Check your internet and try again.';
   }
   if (e.includes('credentials') || e.includes('invalid') || e.includes('wrong') || e.includes('400')) {
     return 'Wrong email or password. Please try again.';
