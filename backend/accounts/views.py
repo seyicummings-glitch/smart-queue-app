@@ -288,7 +288,8 @@ class EmployeeDetailView(generics.RetrieveUpdateDestroyAPIView):
         user = self.request.user
         qs   = User.objects.exclude(role='customer')
         if user.role == 'admin':
-            qs = qs.filter(business=user.business)
+            from django.db.models import Q
+            qs = qs.filter(Q(business=user.business) | Q(business__isnull=True))
         return qs
 
     def perform_destroy(self, instance):
