@@ -42,6 +42,9 @@ class QueueListView(generics.ListAPIView):
             assigned_ids = user.assigned_services.values_list('id', flat=True)
             if assigned_ids:
                 qs = qs.filter(service_id__in=assigned_ids)
+            # Each counter only sees the ticket IT personally called/is serving
+            if status_filter in ('called', 'serving'):
+                qs = qs.filter(served_by=user)
 
         return qs
 
