@@ -285,12 +285,7 @@ class EmployeeDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAdminOrSuperAdmin]
 
     def get_queryset(self):
-        user = self.request.user
-        qs   = User.objects.exclude(role='customer')
-        if user.role == 'admin':
-            from django.db.models import Q
-            qs = qs.filter(Q(business=user.business) | Q(business__isnull=True))
-        return qs
+        return User.objects.exclude(role='customer')
 
     def perform_destroy(self, instance):
         from businesses.models import BusinessRequest, Business
