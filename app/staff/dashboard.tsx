@@ -37,11 +37,6 @@ function initials(name: string) {
   return name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
 }
 
-function fmt12h(iso: string) {
-  const d = new Date(iso);
-  const h = d.getHours(), m = String(d.getMinutes()).padStart(2, '0');
-  return `${h > 12 ? h - 12 : h === 0 ? 12 : h}:${m} ${h >= 12 ? 'PM' : 'AM'}`;
-}
 
 function elapsed(iso: string) {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -58,6 +53,24 @@ function shiftTime(startMs: number) {
   return `${h}h ${m}m on duty`;
 }
 
+function ElapsedTimer({ iso, style }: { iso: string; style: any }) {
+  const [, setT] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setT(n => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return <Text style={style}>{elapsed(iso)}</Text>;
+}
+
+function ShiftTimer({ startMs, style }: { startMs: number; style: any }) {
+  const [, setT] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setT(n => n + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  return <Text style={style}>{shiftTime(startMs)}</Text>;
+}
+
 export default function StaffDashboard() {
   const { user } = useAuth();
 
@@ -67,17 +80,11 @@ export default function StaffDashboard() {
   const [loading,    setLoading]    = useState(true);
   const [refresh,    setRefresh]    = useState(false);
   const [active,     setActive]     = useState(true);
-  const [tick,       setTick]       = useState(0);
   const [completing, setCompleting] = useState(false);
   const [calling,    setCalling]    = useState<number | null>(null);
 
   const shiftStart = useRef(Date.now());
 
-  // Timer for elapsed display (serving card + shift time)
-  useEffect(() => {
-    const t = setInterval(() => setTick(n => n + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
 
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -193,7 +200,7 @@ export default function StaffDashboard() {
                 </Text>
               </View>
             )}
-            <Text style={s.shiftText}>{shiftTime(shiftStart.current)}</Text>
+            <ShiftTimer startMs={shiftStart.current} style={s.shiftText} />
           </View>
           {/* Active / Break toggle */}
           <TouchableOpacity
@@ -239,7 +246,7 @@ export default function StaffDashboard() {
               <Text style={s.servingCardTitle}>Currently Serving</Text>
             </View>
             {serving?.called_at && (
-              <Text style={s.servingTimer}>{elapsed(serving.called_at)}</Text>
+              <ElapsedTimer iso={serving.called_at} style={s.servingTimer} />
             )}
           </View>
 
