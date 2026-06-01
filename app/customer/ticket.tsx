@@ -132,14 +132,15 @@ export default function CustomerTicket() {
     return () => clearInterval(timer);
   }, [apiTicket?.status, apiTicket?.called_at]);
 
-  // Auto-redirect: called → home in 8s, completed → home in 4s (clears activeTicket so customer can rejoin)
+  // Auto-redirect: completed → home in 10s (gives customer time to read completion message)
+  // No auto-redirect for 'called' — customer stays on page to see which counter to go to
   useEffect(() => {
     const status = apiTicket?.status;
     if (!status || autoRedirectRef.current === status) return;
-    if (status !== 'called' && status !== 'completed') return;
+    if (status !== 'completed') return;
 
     autoRedirectRef.current = status;
-    const secs = status === 'called' ? 8 : 4;
+    const secs = 10;
     setAutoRedirectSecs(secs);
 
     const interval = setInterval(() => {
@@ -148,11 +149,9 @@ export default function CustomerTicket() {
 
     const timer = setTimeout(() => {
       clearInterval(interval);
-      if (status === 'completed') {
-        setApiTicket(null);
-        setActiveTicket(null);
-        ticketIdRef.current = null;
-      }
+      setApiTicket(null);
+      setActiveTicket(null);
+      ticketIdRef.current = null;
       router.replace('/customer/home' as any);
     }, secs * 1000);
 
