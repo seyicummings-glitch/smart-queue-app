@@ -219,7 +219,17 @@ const QUICK_ACTIONS: {
 
 export default function CustomerHome() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
+
+  // Redirect staff/admin away from customer home to their correct dashboard
+  useEffect(() => {
+    if (authLoading || !user) return;
+    if (user.role === 'staff') {
+      router.replace('/staff/dashboard' as any);
+    } else if (user.role === 'admin' || user.role === 'superadmin' || user.role === 'super_admin') {
+      router.replace('/admin/dashboard' as any);
+    }
+  }, [user, authLoading]);
 
 const [activeTicket, setActiveTicket] = useState<ActiveTicket | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
