@@ -450,7 +450,7 @@ function friendlyError(error: string): string {
 export default function LoginScreen() {
   const router = useRouter();
   const { setRole } = useAppContext();
-  const { signIn, signUp, resetPassword, confirmPasswordReset, verifyEmail, resendOTP } = useAuth();
+  const { signIn, signUp, resetPassword, confirmPasswordReset, verifyEmail, resendOTP, user: authUser } = useAuth();
 
   const [currentView, setCurrentView] = useState<AuthView>('login');
   const [language, setLanguage] = useState<Language>('en');
@@ -539,7 +539,7 @@ export default function LoginScreen() {
 
     setLoginError('');
     setSubmitting(true);
-    const { error, role, email_verified } = await signIn(email.trim(), password);
+    const { error, role } = await signIn(email.trim(), password);
     setSubmitting(false);
 
     if (error) {
@@ -635,7 +635,7 @@ export default function LoginScreen() {
       return;
     }
     setVerifyCode('');
-    navigateByRole('customer');
+    navigateByRole(authUser?.role ?? 'customer');
   };
 
   const handleSaveServerUrl = async () => {

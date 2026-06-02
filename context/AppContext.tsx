@@ -39,7 +39,7 @@ const AppContext = createContext<AppContextType>({
 });
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [role, setRole] = useState<UserRole>('admin');
+  const [role, setRole] = useState<UserRole>(null);
   const [staffQueues] = useState<StaffQueue[]>([]);
   const [activeTicket, setActiveTicket] = useState<ActiveTicket | null>(null);
 

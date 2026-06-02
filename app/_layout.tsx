@@ -21,10 +21,9 @@ function RoleSyncer() {
   const { setRole } = useAppContext();
 
   useEffect(() => {
-    if (loading) return;
-    if (!user) { setRole(null); return; }
-    const r = user.role;
-    setRole(r as any);
+    if (loading) { setRole(null); return; }   // clear role while auth resolves
+    if (!user)  { setRole(null); return; }
+    setRole(user.role as any);
   }, [user, loading]);
 
   return null;
