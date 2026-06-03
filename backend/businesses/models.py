@@ -1,0 +1,127 @@
+from django.db import models
+
+
+INDUSTRY_CHOICES = [
+    ('banking',    'Banking'),
+    ('healthcare', 'Healthcare'),
+    ('retail',     'Retail'),
+    ('government', 'Government'),
+    ('education',  'Education'),
+    ('corporate',  'Corporate'),
+]
+
+INDUSTRY_KEYS = [k for k, _ in INDUSTRY_CHOICES]
+
+
+class Industry(models.Model):
+    """Dynamically managed industry list — super admin can add/remove."""
+    key        = models.SlugField(max_length=50, unique=True)
+    label      = models.CharField(max_length=100)
+    icon       = models.CharField(max_length=50, default='business')
+    color      = models.CharField(max_length=20, default='#6B7280')
+    is_visible = models.BooleanField(default=True)
+    is_builtin = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = 'industries'
+        ordering = ['label']
+
+    def __str__(self):
+        return self.label
+
+
+class IndustryBranch(models.Model):
+    """Admin-managed branch locations within an industry."""
+    industry   = models.ForeignKey(Industry, on_delete=models.CASCADE, related_name='branches')
+    name       = models.CharField(max_length=200)
+    address    = models.TextField(blank=True)
+    phone      = models.CharField(max_length=20, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return f'{self.name} ({self.industry.label})'
+
+
+class Business(models.Model):
+    PLANS = [
+        ('basic',      'Basic'),
+        ('pro',        'Pro'),
+        ('enterprise', 'Enterprise'),
+    ]
+    STATUS = [
+        ('active',    'Active'),
+        ('inactive',  'Inactive'),
+        ('suspended', 'Suspended'),
+    ]
+
+    name       = models.CharField(max_length=200)
+    industry   = models.CharField(max_length=50, choices=INDUSTRY_CHOICES, blank=True)
+    industries = models.ManyToManyField(Industry, blank=True, related_name='businesses')
+    plan       = models.CharField(max_length=20, choices=PLANS, default='basic')
+    status     = models.CharField(max_length=20, choices=STATUS, default='active')
+    owner      = models.ForeignKey(
+        'accounts.User',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='owned_businesses',
+    )
+    address    = models.TextField(blank=True)
+    phone      = models.CharField(max_length=20, blank=True)
+    email      = models.EmailField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = 'businesses'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.name
+
+
+class BusinessRequest(models.Model):
+    STATUS = [
+        ('pending',  'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+
+    business_name = models.CharField(max_length=200)
+    industry      = models.CharField(max_length=100)
+    contact_name  = models.CharField(max_length=150)
+    email         = models.EmailField()
+    phone         = models.CharField(max_length=20, blank=True)
+    message       = models.TextField(blank=True)
+    status        = models.CharField(max_length=20, choices=STATUS, default='pending')
+    reviewed_by   = models.ForeignKey(
+        'accounts.User',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='reviewed_requests',
+    )
+    created_at    = models.DateTimeField(auto_now_add=True)
+    updated_at    = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.business_name} ({self.status})'
+
+
+class IndustryControl(models.Model):
+    """Super-admin toggle — controls which of the 6 built-in industries customers can see."""
+    industry   = models.CharField(max_length=50, choices=INDUSTRY_CHOICES, unique=True)
+    is_visible = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['industry']
+
+    def __str__(self):
+        return f'{self.industry} ({"on" if self.is_visible else "off"})'

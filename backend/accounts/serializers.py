@@ -1,0 +1,113 @@
+from rest_framework import serializers
+from django.contrib.auth import authenticate
+from .models import User
+
+
+class UserSerializer(serializers.ModelSerializer):
+    business                = serializers.SerializerMethodField()
+    assigned_branch_name    = serializers.SerializerMethodField()
+    assigned_services_names = serializers.SerializerMethodField()
+    business_industry       = serializers.SerializerMethodField()
+
+    def get_business(self, obj):
+        return obj.business_id
+
+    def get_assigned_branch_name(self, obj):
+        return obj.assigned_branch.name if obj.assigned_branch else None
+
+    def get_assigned_services_names(self, obj):
+        return list(obj.assigned_services.values_list('name', flat=True))
+
+    def get_business_industry(self, obj):
+        return obj.business.industry if obj.business else None
+
+    class Meta:
+        model  = User
+        fields = (
+            'id', 'email', 'full_name', 'role', 'phone', 'date_of_birth',
+            'business', 'business_industry', 'email_verified', 'created_at',
+            'counter_number', 'assigned_branch_name', 'assigned_services_names',
+        )
+        read_only_fields = ('id', 'email_verified', 'created_at')
+
+
+class RegisterSerializer(serializers.ModelSerializer):
+    password      = serializers.CharField(write_only=True, min_length=8, max_length=8)
+    password2     = serializers.CharField(write_only=True, min_length=8, max_length=8)
+    date_of_birth = serializers.DateField(required=False, allow_null=True)
+
+    class Meta:
+        model  = User
+        fields = ('email', 'full_name', 'password', 'password2', 'phone', 'date_of_birth')
+
+    def validate(self, data):
+        if data['password'] != data['password2']:
+            raise serializers.ValidationError({'password': 'Passwords do not match.'})
+        return data
+
+    def create(self, validated_data):
+        validated_data.pop('password2')
+        return User.objects.create_user(**validated_data)
+
+
+class LoginSerializer(serializers.Serializer):
+    email    = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        user = authenticate(email=data['email'], password=data['password'])
+        if not user:
+            raise serializers.ValidationError('Invalid credentials.')
+        if not user.is_active:
+            raise serializers.ValidationError('Account is disabled.')
+        data['user'] = user
+        return data
+
+
+class EmployeeSerializer(serializers.ModelSerializer):
+    password          = serializers.CharField(write_only=True, required=False, min_length=6)
+    assigned_services = serializers.PrimaryKeyRelatedField(
+        many=True,
+        required=False,
+        queryset=__import__('services.models', fromlist=['Service']).Service.objects.all(),
+    )
+    assigned_branch = serializers.PrimaryKeyRelatedField(
+        required=False,
+        allow_null=True,
+        queryset=__import__('branches.models', fromlist=['Branch']).Branch.objects.all(),
+    )
+    assigned_branch_name = serializers.SerializerMethodField(read_only=True)
+
+    def get_assigned_branch_name(self, obj):
+        if obj.assigned_branch:
+            return obj.assigned_branch.name
+        return None
+
+    class Meta:
+        model  = User
+        fields = (
+            'id', 'email', 'full_name', 'role', 'phone', 'business',
+            'password', 'counter_number', 'assigned_branch', 'assigned_branch_name',
+            'assigned_services', 'created_at',
+        )
+        read_only_fields = ('id', 'created_at')
+
+    def create(self, validated_data):
+        password          = validated_data.pop('password', 'changeme')
+        assigned_services = validated_data.pop('assigned_services', [])
+        user = User.objects.create_user(password=password, **validated_data)
+        if assigned_services:
+            user.assigned_services.set(assigned_services)
+        return user
+
+    def update(self, instance, validated_data):
+        password          = validated_data.pop('password', None)
+        assigned_services = validated_data.pop('assigned_services', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        if assigned_services is not None:
+            instance.assigned_services.set(assigned_services)
+        instance.save()
+        return instance
