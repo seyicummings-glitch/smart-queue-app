@@ -233,7 +233,7 @@ class MyCounterView(APIView):
 
     def get(self, request):
         user = request.user
-        services = list(user.assigned_services.all().values('id', 'name'))
+        services = list(user.assigned_services.all().values('id', 'name', 'industry'))
         return Response({
             'counter_number':       user.counter_number,
             'assigned_services':    services,

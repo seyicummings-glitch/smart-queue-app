@@ -481,7 +481,7 @@ export default function AppointmentsScreen() {
 
   const [appointments,      setAppointments]      = useState<Appointment[]>([]);
   const [loading,           setLoading]           = useState(true);
-  const [staffServiceNames, setStaffServiceNames] = useState<string[] | null>(null);
+  const [staffServices, setStaffServices] = useState<{ name: string; industry: string }[] | null>(null);
   const [publishedIds,      setPublishedIds]      = useState<string[] | null>(null);
 
   const [apiBranches, setApiBranches] = useState<ApiBranch[]>([]);
@@ -538,12 +538,12 @@ export default function AppointmentsScreen() {
     });
   }, [form.industryId]);
 
-  // Staff: fetch assigned services
+  // Staff: fetch assigned services with their industry
   useEffect(() => {
     if (role !== 'staff') return;
-    api.get<{ assigned_services: { id: number; name: string }[] }>('/accounts/my-counter/')
+    api.get<{ assigned_services: { id: number; name: string; industry: string }[] }>('/accounts/my-counter/')
       .then(({ data }) => {
-        if (data) setStaffServiceNames(data.assigned_services.map(s => s.name));
+        if (data) setStaffServices(data.assigned_services.map(s => ({ name: s.name, industry: s.industry })));
       });
   }, [role]);
 
@@ -552,11 +552,13 @@ export default function AppointmentsScreen() {
     if (publishedIds !== null && publishedIds.length > 0) {
       groups = groups.filter(g => publishedIds.includes(g.industryId));
     }
-    if (role === 'staff' && staffServiceNames !== null && staffServiceNames.length > 0) {
-      groups = groups.filter(g => g.services.some(s => staffServiceNames.includes(s.name)));
+    if (role === 'staff' && staffServices !== null && staffServices.length > 0) {
+      // Filter by BOTH industry and service name to avoid cross-industry name collisions
+      const assignedIndustries = new Set(staffServices.map(s => s.industry));
+      groups = groups.filter(g => assignedIndustries.has(g.industryId));
     }
     return groups;
-  }, [publishedIds, role, staffServiceNames]);
+  }, [publishedIds, role, staffServices]);
 
   const openBooking = (reschedule?: Appointment) => {
     if (reschedule) {
@@ -850,7 +852,7 @@ export default function AppointmentsScreen() {
   // ── Staff: service grid ───────────────────────────────────────────────────────
   if (isStaff && !selectedService) {
     // Wait for both appointments AND assigned services to load before rendering
-    const staffLoading = loading || (role === 'staff' && staffServiceNames === null);
+    const staffLoading = loading || (role === 'staff' && staffServices === null);
 
     return (
       <SafeAreaView style={st.container}>
@@ -874,8 +876,9 @@ export default function AppointmentsScreen() {
               </View>
             ) : visibleGroups.map(group => {
               // Only show services this staff member is actually assigned to
+              const assignedServiceNames = staffServices?.filter(s => s.industry === group.industryId).map(s => s.name);
               const assignedServices = group.services.filter(svc =>
-                !staffServiceNames || staffServiceNames.includes(svc.name)
+                !assignedServiceNames || assignedServiceNames.includes(svc.name)
               );
               return (
                 <View key={group.industry}>
