@@ -229,37 +229,50 @@ function idToName(id: number, backendServices: BackendService[]): string {
 function AssignmentWizard({
   backendSvcs,
   branches,
-  industry,
+  industries,
   branch,
   services,
   seeding,
-  onIndustryChange,
+  onIndustriesChange,
   onBranchChange,
   onServicesChange,
 }: {
   backendSvcs: BackendService[];
   branches: Branch[];
-  industry: string | null;
+  industries: string[];
   branch: number | null;
   services: number[];
   seeding: boolean;
-  onIndustryChange: (v: string | null) => void;
+  onIndustriesChange: (v: string[]) => void;
   onBranchChange: (v: number | null) => void;
   onServicesChange: (v: number[]) => void;
 }) {
-  const ind = INDUSTRIES.find(i => i.id === industry) ?? null;
+  const selectedInds = INDUSTRIES.filter(i => industries.includes(i.id));
 
-  // Branches filtered by the selected industry
-  const industryBranches = industry
-    ? branches.filter(b => b.industry === industry)
+  // Toggle one industry in/out of the selection
+  const toggleIndustry = (id: string) => {
+    if (industries.includes(id)) {
+      const next = industries.filter(i => i !== id);
+      onIndustriesChange(next);
+      // Remove services that belong to this industry
+      const toRemove = new Set(backendSvcs.filter(s => s.industry === id).map(s => s.id));
+      onServicesChange(services.filter(s => !toRemove.has(s)));
+    } else {
+      onIndustriesChange([...industries, id]);
+    }
+  };
+
+  // Branches from any of the selected industries
+  const industryBranches = industries.length > 0
+    ? branches.filter(b => industries.includes(b.industry))
     : branches;
 
-  // Services in DB matching the selected industry — deduplicated by name
+  // Services from ALL selected industries — deduplicated by name
   const industryServices = (() => {
-    if (!industry) return [];
+    if (industries.length === 0) return [];
     const seen = new Set<string>();
     return backendSvcs.filter(s => {
-      if (s.industry !== industry) return false;
+      if (!industries.includes(s.industry)) return false;
       if (seen.has(s.name)) return false;
       seen.add(s.name);
       return true;
@@ -267,7 +280,7 @@ function AssignmentWizard({
   })();
 
   const clearAll = () => {
-    onIndustryChange(null);
+    onIndustriesChange([]);
     onBranchChange(null);
     onServicesChange([]);
   };
@@ -275,60 +288,54 @@ function AssignmentWizard({
   return (
     <View style={s.wizardWrap}>
 
-      {/* ── Step 1: Industry ─────────────────────────────── */}
+      {/* ── Step 1: Industries (multi-select) ────────────── */}
       <View style={s.stepBlock}>
         <View style={s.stepRow}>
-          <View style={[s.stepCircle, industry != null && s.stepCircleDone]}>
-            {industry != null
+          <View style={[s.stepCircle, industries.length > 0 && s.stepCircleDone]}>
+            {industries.length > 0
               ? <MaterialIcons name="check" size={12} color="#fff" />
               : <Text style={s.stepCircleNum}>1</Text>}
           </View>
-          <Text style={s.stepTitle}>Select Industry</Text>
-          {industry != null && (
+          <Text style={s.stepTitle}>
+            Select Industries
+            {industries.length > 0 && (
+              <Text style={{ color: '#2563eb' }}> · {industries.length} selected</Text>
+            )}
+          </Text>
+          {industries.length > 0 && (
             <TouchableOpacity onPress={clearAll} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Text style={s.changeTxt}>Change</Text>
+              <Text style={s.clearTxt}>Clear all</Text>
             </TouchableOpacity>
           )}
         </View>
 
-        {industry != null && ind ? (
-          // Collapsed: show selected chip
-          <View style={[s.selectedChip, { borderColor: ind.color, backgroundColor: ind.bg }]}>
-            <View style={[s.selectedChipIcon, { backgroundColor: ind.color }]}>
-              <MaterialIcons name={ind.icon} size={14} color="#fff" />
-            </View>
-            <Text style={[s.selectedChipTxt, { color: ind.color }]}>{ind.label}</Text>
-          </View>
-        ) : (
-          // Expanded: 2-column grid
-          <View style={s.industryGrid}>
-            {INDUSTRIES.map(i => (
+        {/* Always-visible multi-select grid */}
+        <View style={s.industryGrid}>
+          {INDUSTRIES.map(i => {
+            const isSel = industries.includes(i.id);
+            return (
               <TouchableOpacity
                 key={i.id}
-                style={s.industryGridCard}
-                onPress={() => { onIndustryChange(i.id); onBranchChange(null); onServicesChange([]); }}
+                style={[s.industryGridCard, isSel && { borderColor: i.color, backgroundColor: i.bg }]}
+                onPress={() => toggleIndustry(i.id)}
                 activeOpacity={0.72}
               >
-                <View style={[s.industryGridIcon, { backgroundColor: i.bg }]}>
-                  <MaterialIcons name={i.icon} size={22} color={i.color} />
+                <View style={[s.industryGridIcon, { backgroundColor: isSel ? i.color : i.bg }]}>
+                  <MaterialIcons name={isSel ? 'check' : i.icon} size={22} color={isSel ? '#fff' : i.color} />
                 </View>
                 <Text style={[s.industryGridLabel, { color: i.color }]} numberOfLines={2}>
                   {i.label}
                 </Text>
               </TouchableOpacity>
-            ))}
-          </View>
-        )}
+            );
+          })}
+        </View>
       </View>
 
-      {/* ── Step 2: Branch (unlocks after industry) ──────── */}
-      {industry != null && (
+      {/* ── Step 2: Branch (unlocks after selecting industry) */}
+      {industries.length > 0 && (
         <View style={s.stepBlock}>
           <View style={s.stepRow}>
-            <TouchableOpacity onPress={clearAll} style={s.stepBackBtn} activeOpacity={0.7}>
-              <MaterialIcons name="arrow-back" size={14} color="#475569" />
-              <Text style={s.stepBackTxt}>Back</Text>
-            </TouchableOpacity>
             <View style={[s.stepCircle, branch != null && s.stepCircleDone]}>
               {branch != null
                 ? <MaterialIcons name="check" size={12} color="#fff" />
@@ -338,12 +345,11 @@ function AssignmentWizard({
             <Text style={s.stepNote}>optional</Text>
           </View>
 
-          {/* Subtitle showing the industry context */}
-          {ind && (
-            <View style={[s.contextTag, { backgroundColor: ind.bg }]}>
-              <MaterialIcons name={ind.icon} size={12} color={ind.color} />
-              <Text style={[s.contextTagTxt, { color: ind.color }]}>
-                {ind.label} — select the branch this staff will serve
+          {selectedInds.length > 0 && (
+            <View style={[s.contextTag, { backgroundColor: '#eff6ff' }]}>
+              <MaterialIcons name="place" size={12} color="#2563eb" />
+              <Text style={[s.contextTagTxt, { color: '#2563eb' }]}>
+                Showing branches for: {selectedInds.map(i => i.label).join(', ')}
               </Text>
             </View>
           )}
@@ -404,14 +410,10 @@ function AssignmentWizard({
         </View>
       )}
 
-      {/* ── Step 3: Services (unlocks after industry) ────── */}
-      {industry != null && (
+      {/* ── Step 3: Services (unlocks after industry selected) */}
+      {industries.length > 0 && (
         <View style={s.stepBlock}>
           <View style={s.stepRow}>
-            <TouchableOpacity onPress={clearAll} style={s.stepBackBtn} activeOpacity={0.7}>
-              <MaterialIcons name="arrow-back" size={14} color="#475569" />
-              <Text style={s.stepBackTxt}>Back</Text>
-            </TouchableOpacity>
             <View style={[s.stepCircle, services.length > 0 && s.stepCircleDone]}>
               {services.length > 0
                 ? <MaterialIcons name="check" size={12} color="#fff" />
@@ -419,8 +421,8 @@ function AssignmentWizard({
             </View>
             <Text style={s.stepTitle}>
               Assign Services
-              {services.length > 0 && ind && (
-                <Text style={{ color: ind.color }}> · {services.length} selected</Text>
+              {services.length > 0 && (
+                <Text style={{ color: '#2563eb' }}> · {services.length} selected</Text>
               )}
             </Text>
             {services.length > 0 && (
@@ -430,14 +432,13 @@ function AssignmentWizard({
             )}
           </View>
 
-          {/* Branch context for services */}
           {branch != null && (() => {
             const br = branches.find(b => b.id === branch);
             return br ? (
               <View style={[s.contextTag, { backgroundColor: '#f0fdf4' }]}>
                 <MaterialIcons name="place" size={12} color="#059669" />
                 <Text style={[s.contextTagTxt, { color: '#059669' }]}>
-                  {br.name} — showing {ind?.label ?? 'industry'} services
+                  {br.name} — services from selected industries
                 </Text>
               </View>
             ) : null;
@@ -451,7 +452,7 @@ function AssignmentWizard({
           ) : industryServices.length === 0 ? (
             <View style={s.infoBox}>
               <MaterialIcons name="info-outline" size={15} color="#94a3b8" />
-              <Text style={s.infoTxt}>No services found for this industry in the database</Text>
+              <Text style={s.infoTxt}>No services found for selected industries</Text>
             </View>
           ) : (
             <ScrollView
@@ -462,11 +463,12 @@ function AssignmentWizard({
             >
               <View style={s.serviceList}>
                 {industryServices.map(svc => {
-                  const isSel = services.includes(svc.id);
+                  const isSel  = services.includes(svc.id);
+                  const svcInd = INDUSTRIES.find(i => i.id === svc.industry);
                   return (
                     <TouchableOpacity
                       key={svc.id}
-                      style={[s.svcRow, isSel && ind && { borderColor: ind.color, backgroundColor: ind.bg }]}
+                      style={[s.svcRow, isSel && svcInd && { borderColor: svcInd.color, backgroundColor: svcInd.bg }]}
                       onPress={() =>
                         onServicesChange(
                           isSel ? services.filter(x => x !== svc.id) : [...services, svc.id],
@@ -474,7 +476,7 @@ function AssignmentWizard({
                       }
                       activeOpacity={0.75}
                     >
-                      <View style={[s.checkbox, isSel && ind && { backgroundColor: ind.color, borderColor: ind.color }]}>
+                      <View style={[s.checkbox, isSel && svcInd && { backgroundColor: svcInd.color, borderColor: svcInd.color }]}>
                         {isSel && <MaterialIcons name="check" size={13} color="#fff" />}
                       </View>
                       <View style={{ flex: 1 }}>
@@ -482,9 +484,12 @@ function AssignmentWizard({
                         {svc.estimated_time > 0 && (
                           <Text style={s.svcTime}>~{svc.estimated_time} min avg</Text>
                         )}
+                        {svcInd && (
+                          <Text style={[s.svcTime, { color: svcInd.color }]}>{svcInd.label}</Text>
+                        )}
                       </View>
-                      {isSel && ind && (
-                        <MaterialIcons name="check-circle" size={16} color={ind.color} />
+                      {isSel && svcInd && (
+                        <MaterialIcons name="check-circle" size={16} color={svcInd.color} />
                       )}
                     </TouchableOpacity>
                   );
@@ -503,7 +508,7 @@ function AssignmentWizard({
 export default function EmployeeManagement() {
   const router = useRouter();
   const { user: currentUser } = useAuth();
-  const isSuperAdmin = currentUser?.role === 'superadmin' || currentUser?.role === 'super_admin';
+  const isSuperAdmin = currentUser?.role === 'superadmin';
 
   const [employees,   setEmployees]   = useState<Employee[]>([]);
   const [backendSvcs, setBackendSvcs] = useState<BackendService[]>([]);
@@ -520,9 +525,9 @@ export default function EmployeeManagement() {
   const [fCountry,  setFCountry]  = useState<CountryEntry>(COUNTRY_CODES[0]);
   const [fPhone,    setFPhone]    = useState('');
   const [fCounter,  setFCounter]  = useState('');
-  const [fIndustry, setFIndustry] = useState<string | null>(null);
-  const [fBranch,   setFBranch]   = useState<number | null>(null);
-  const [fServices, setFServices] = useState<number[]>([]);
+  const [fIndustries, setFIndustries] = useState<string[]>([]);
+  const [fBranch,     setFBranch]     = useState<number | null>(null);
+  const [fServices,   setFServices]   = useState<number[]>([]);
   const [fErrors,   setFErrors]   = useState<Record<string, string>>({});
   const [fRole,     setFRole]     = useState<'staff' | 'admin'>('staff');
   const [adding,    setAdding]    = useState(false);
@@ -531,7 +536,7 @@ export default function EmployeeManagement() {
   const [assignModal,  setAssignModal]  = useState(false);
   const [assignTarget, setAssignTarget] = useState<Employee | null>(null);
   const [aCounter,     setACounter]     = useState('');
-  const [aIndustry,    setAIndustry]    = useState<string | null>(null);
+  const [aIndustries,  setAIndustries]  = useState<string[]>([]);
   const [aBranch,      setABranch]      = useState<number | null>(null);
   const [aServices,    setAServices]    = useState<number[]>([]);
   const [saving,       setSaving]       = useState(false);
@@ -609,7 +614,7 @@ export default function EmployeeManagement() {
   const openAdd = () => {
     setFName(''); setFEmail('');
     setFCountry(COUNTRY_CODES[0]); setFPhone(''); setFCounter('');
-    setFIndustry(null); setFBranch(null); setFServices([]);
+    setFIndustries([]); setFBranch(null); setFServices([]);
     setFErrors({}); setFRole('staff');
     setAddModal(true);
   };
@@ -692,10 +697,13 @@ export default function EmployeeManagement() {
     setACounter(emp.counter_number != null ? String(emp.counter_number) : '');
     setABranch(emp.assigned_branch ?? null);
 
-    // Detect industry from first assigned service
-    const firstSvcId = emp.assigned_services?.[0];
-    const firstSvc   = firstSvcId != null ? backendSvcs.find(s => s.id === firstSvcId) : undefined;
-    setAIndustry(firstSvc?.industry ?? null);
+    // Detect ALL industries from assigned services
+    const assignedIndustries = [...new Set(
+      (emp.assigned_services ?? [])
+        .map(id => backendSvcs.find(s => s.id === id)?.industry)
+        .filter((x): x is string => !!x)
+    )];
+    setAIndustries(assignedIndustries);
 
     setAServices(emp.assigned_services ?? []);
     setAssignModal(true);
@@ -815,10 +823,12 @@ export default function EmployeeManagement() {
               .map(id => idToName(id, backendSvcs))
               .filter(Boolean);
 
-            // Detect industry for badge
-            const firstSvcId = emp.assigned_services?.[0];
-            const firstSvc   = firstSvcId != null ? backendSvcs.find(sv => sv.id === firstSvcId) : undefined;
-            const empInd     = firstSvc ? INDUSTRIES.find(i => i.id === firstSvc.industry) : null;
+            // Detect ALL industries from assigned services
+            const empInds = [...new Set(
+              (emp.assigned_services ?? [])
+                .map(id => backendSvcs.find(sv => sv.id === id)?.industry)
+                .filter((x): x is string => !!x)
+            )].map(indId => INDUSTRIES.find(i => i.id === indId)).filter(Boolean) as typeof INDUSTRIES;
 
             return (
               <View key={emp.id} style={s.card}>
@@ -843,12 +853,12 @@ export default function EmployeeManagement() {
                   <View style={[s.badge, { backgroundColor: roleStyle.bg }]}>
                     <Text style={[s.badgeTxt, { color: roleStyle.color }]}>{roleStyle.label}</Text>
                   </View>
-                  {empInd && (
-                    <View style={[s.badge, { backgroundColor: empInd.bg }]}>
-                      <MaterialIcons name={empInd.icon} size={10} color={empInd.color} />
-                      <Text style={[s.badgeTxt, { color: empInd.color, marginLeft: 3 }]}>{empInd.label}</Text>
+                  {empInds.map(ei => (
+                    <View key={ei.id} style={[s.badge, { backgroundColor: ei.bg }]}>
+                      <MaterialIcons name={ei.icon} size={10} color={ei.color} />
+                      <Text style={[s.badgeTxt, { color: ei.color, marginLeft: 3 }]}>{ei.label}</Text>
                     </View>
-                  )}
+                  ))}
                   {emp.counter_number != null && (
                     <View style={s.counterBadge}>
                       <MaterialIcons name="tag" size={11} color="#2563eb" />
@@ -874,11 +884,16 @@ export default function EmployeeManagement() {
                   <View style={s.servicesRow}>
                     <MaterialIcons name="room-service" size={12} color="#94a3b8" />
                     <View style={s.serviceTagsWrap}>
-                      {empSvcNames.map(n => (
-                        <View key={n} style={[s.svcTag, empInd && { backgroundColor: empInd.bg }]}>
-                          <Text style={[s.svcTagTxt, empInd && { color: empInd.color }]}>{n}</Text>
-                        </View>
-                      ))}
+                      {empSvcNames.map(n => {
+                        const svcInd = empInds.find(ei =>
+                          backendSvcs.some(sv => sv.name === n && sv.industry === ei.id)
+                        );
+                        return (
+                          <View key={n} style={[s.svcTag, svcInd && { backgroundColor: svcInd.bg }]}>
+                            <Text style={[s.svcTagTxt, svcInd && { color: svcInd.color }]}>{n}</Text>
+                          </View>
+                        );
+                      })}
                     </View>
                   </View>
                 )}
@@ -1015,11 +1030,11 @@ export default function EmployeeManagement() {
                 <AssignmentWizard
                   backendSvcs={backendSvcs}
                   branches={branches}
-                  industry={fIndustry}
+                  industries={fIndustries}
                   branch={fBranch}
                   services={fServices}
                   seeding={seeding}
-                  onIndustryChange={setFIndustry}
+                  onIndustriesChange={setFIndustries}
                   onBranchChange={setFBranch}
                   onServicesChange={setFServices}
                 />
@@ -1088,11 +1103,11 @@ export default function EmployeeManagement() {
                 <AssignmentWizard
                   backendSvcs={backendSvcs}
                   branches={branches}
-                  industry={aIndustry}
+                  industries={aIndustries}
                   branch={aBranch}
                   services={aServices}
                   seeding={seeding}
-                  onIndustryChange={setAIndustry}
+                  onIndustriesChange={setAIndustries}
                   onBranchChange={setABranch}
                   onServicesChange={setAServices}
                 />
