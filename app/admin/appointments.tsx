@@ -1,634 +1,501 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  StatusBar,
-  Modal,
-  TextInput,
-  KeyboardAvoidingView,
-  Platform,
-  Alert,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  StatusBar, Alert, ActivityIndicator, RefreshControl, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import BottomNav from '@/components/BottomNav';
+import { api, clearCache } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 
-type AppointmentStatus = 'upcoming' | 'completed' | 'cancelled';
-type TabKey = 'all' | AppointmentStatus;
+type IconName = React.ComponentProps<typeof MaterialIcons>['name'];
 
-type Appointment = {
+// ── API shape ─────────────────────────────────────────────────────────────────
+
+type ApiAppointment = {
   id: number;
-  customer: string;
-  service: string;
-  industry: string;
-  date: string;   // YYYY-MM-DD
-  time: string;
-  status: AppointmentStatus;
+  customer_name: string;
+  service_name: string;
+  branch_name: string;
+  appointment_date: string;
+  appointment_time: string;
+  status: 'scheduled' | 'confirmed' | 'completed' | 'cancelled';
   notes: string;
 };
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Industry definitions ──────────────────────────────────────────────────────
+
+const INDUSTRIES: {
+  id: string;
+  label: string;
+  icon: IconName;
+  color: string;
+  bg: string;
+  services: string[];
+}[] = [
+  {
+    id: 'banking', label: 'Banking & Finance', icon: 'account-balance',
+    color: '#2563eb', bg: '#eff6ff',
+    services: ['Teller Services','Loan Consultation','Account Opening','Card Services','Customer Service'],
+  },
+  {
+    id: 'healthcare', label: 'Healthcare', icon: 'favorite',
+    color: '#e11d48', bg: '#fff1f2',
+    services: ['General Practitioner','Pharmacy Pickup','Blood Test / Lab','Dental','Specialist Consult'],
+  },
+  {
+    id: 'retail', label: 'Retail', icon: 'shopping-bag',
+    color: '#d97706', bg: '#fffbeb',
+    services: ['Returns & Exchanges','Customer Service','Tech Support','Click & Collect'],
+  },
+  {
+    id: 'government', label: 'Government Services', icon: 'gavel',
+    color: '#475569', bg: '#f1f5f9',
+    services: ['Document Processing','Permits & Licenses','General Inquiries','ID / Passport Renewal'],
+  },
+  {
+    id: 'education', label: 'Education', icon: 'school',
+    color: '#4f46e5', bg: '#eef2ff',
+    services: ['Admissions','Registrar','Financial Aid','Library Services'],
+  },
+  {
+    id: 'corporate', label: 'Corporate Office', icon: 'business',
+    color: '#0d9488', bg: '#f0fdfa',
+    services: ['Reception','HR Services','IT Support','Facilities'],
+  },
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 function formatDate(iso: string) {
-  const parts = iso.split('-');
-  if (parts.length !== 3) return iso;
-  const [y, m, d] = parts.map(Number);
+  const [y, m, d] = iso.split('-').map(Number);
   return `${MONTH_NAMES[m - 1]} ${d}, ${y}`;
+}
+
+function formatTime(t: string) {
+  if (!t) return '';
+  const [h, m] = t.split(':').map(Number);
+  const ap = h >= 12 ? 'PM' : 'AM';
+  const hr = h > 12 ? h - 12 : h === 0 ? 12 : h;
+  return `${hr}:${String(m).padStart(2, '0')} ${ap}`;
+}
+
+function initials(name: string) {
+  const p = name.trim().split(' ');
+  return ((p[0]?.[0] ?? '') + (p[1]?.[0] ?? '')).toUpperCase();
 }
 
 function todayISO() {
   const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
-function isToday(iso: string) { return iso === todayISO(); }
-
-function initials(name: string) {
-  const parts = name.trim().split(' ');
-  return (parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '');
-}
-
-// ── Static data ───────────────────────────────────────────────────────────────
-const INDUSTRY_LIST = [
-  'Banking & Finance',
-  'Healthcare',
-  'Retail',
-  'Government Services',
-  'Education',
-  'Corporate Office',
-];
-
-const INDUSTRY_COLORS: Record<string, { color: string; bg: string }> = {
-  'Banking & Finance':   { color: '#2563eb', bg: '#eff6ff' },
-  Healthcare:            { color: '#059669', bg: '#ecfdf5' },
-  Retail:                { color: '#f97316', bg: '#fff7ed' },
-  'Government Services': { color: '#475569', bg: '#f1f5f9' },
-  Education:             { color: '#4f46e5', bg: '#eef2ff' },
-  'Corporate Office':    { color: '#7c3aed', bg: '#f5f3ff' },
+const STATUS_META: Record<string, { label: string; color: string; bg: string; icon: IconName }> = {
+  scheduled: { label: 'Scheduled', color: '#2563eb', bg: '#eff6ff', icon: 'schedule'     },
+  confirmed: { label: 'Confirmed', color: '#059669', bg: '#ecfdf5', icon: 'check-circle'  },
+  completed: { label: 'Completed', color: '#7c3aed', bg: '#f5f3ff', icon: 'done-all'      },
+  cancelled: { label: 'Cancelled', color: '#e11d48', bg: '#fff1f2', icon: 'cancel'        },
 };
 
-const STATUS_META: Record<AppointmentStatus, { label: string; color: string; bg: string; icon: React.ComponentProps<typeof MaterialIcons>['name'] }> = {
-  upcoming:  { label: 'Upcoming',  color: '#2563eb', bg: '#eff6ff',  icon: 'schedule'    },
-  completed: { label: 'Completed', color: '#059669', bg: '#ecfdf5',  icon: 'check-circle' },
-  cancelled: { label: 'Cancelled', color: '#e11d48', bg: '#fff1f2',  icon: 'cancel'       },
-};
+// ── Main screen ───────────────────────────────────────────────────────────────
 
-const TABS: { key: TabKey; label: string }[] = [
-  { key: 'all',       label: 'All'       },
-  { key: 'upcoming',  label: 'Upcoming'  },
-  { key: 'completed', label: 'Completed' },
-  { key: 'cancelled', label: 'Cancelled' },
-];
-
-const TIME_SLOTS = [
-  '8:00 AM','8:30 AM','9:00 AM','9:30 AM','10:00 AM','10:30 AM',
-  '11:00 AM','11:30 AM','12:00 PM','12:30 PM','1:00 PM','1:30 PM',
-  '2:00 PM','2:30 PM','3:00 PM','3:30 PM','4:00 PM','4:30 PM',
-  '5:00 PM','5:30 PM','6:00 PM',
-];
-
-const INITIAL_APPOINTMENTS: Appointment[] = [
-  { id: 1, customer: 'James Wilson',   service: 'Account Opening',       industry: 'Banking & Finance',   date: '2026-05-07', time: '10:30 AM', status: 'upcoming',  notes: 'First time customer'  },
-  { id: 2, customer: 'Maria Santos',   service: 'Loan Consultation',     industry: 'Banking & Finance',   date: '2026-05-07', time: '11:00 AM', status: 'upcoming',  notes: ''                     },
-  { id: 3, customer: 'David Chen',     service: 'General Consultation',  industry: 'Healthcare',          date: '2026-05-06', time: '2:00 PM',  status: 'completed', notes: ''                     },
-  { id: 4, customer: 'Priya Patel',    service: 'Document Processing',   industry: 'Government Services', date: '2026-05-05', time: '9:00 AM',  status: 'cancelled', notes: 'Rescheduled'          },
-  { id: 5, customer: 'Lucas Oliveira', service: 'Course Registration',   industry: 'Education',           date: '2026-05-07', time: '3:30 PM',  status: 'upcoming',  notes: ''                     },
-  { id: 6, customer: 'Aisha Nwosu',    service: 'IT Support',            industry: 'Corporate Office',    date: '2026-05-07', time: '4:00 PM',  status: 'upcoming',  notes: 'Returning client'     },
-  { id: 7, customer: 'Tom Harris',     service: 'Credit Card Services',  industry: 'Banking & Finance',   date: '2026-05-08', time: '9:30 AM',  status: 'upcoming',  notes: ''                     },
-  { id: 8, customer: 'Fatima Al-Rashid', service: 'Pharmacy Pickup',    industry: 'Healthcare',          date: '2026-05-06', time: '1:00 PM',  status: 'completed', notes: ''                     },
-];
-
-const BLANK_FORM = {
-  customer: '',
-  service: '',
-  industry: INDUSTRY_LIST[0],
-  date: todayISO(),
-  time: '9:00 AM',
-  notes: '',
-};
-
-// ── Component ─────────────────────────────────────────────────────────────────
 export default function AdminAppointments() {
   const router = useRouter();
-  const [appointments, setAppointments] = useState<Appointment[]>(INITIAL_APPOINTMENTS);
-  const [tab,    setTab]    = useState<TabKey>('all');
+  const { user } = useAuth();
+  const assignedBranch   = user?.assigned_branch_name ?? null;
+  const assignedIndustry = user?.business_industry    ?? null;  // e.g. 'banking'
+
+  // Which industries this admin can see (super_admin: all; admin: only their own)
+  const visibleIndustries = React.useMemo(() => {
+    if (!assignedIndustry) return INDUSTRIES;
+    return INDUSTRIES.filter(i => i.id === assignedIndustry);
+  }, [assignedIndustry]);
+
+  const [appointments, setAppointments] = useState<ApiAppointment[]>([]);
+  const [loading,      setLoading]      = useState(true);
+  const [refreshing,   setRefreshing]   = useState(false);
+  const [selectedIndustry, setSelectedIndustry] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [modalVisible, setModalVisible] = useState(false);
-  const [form, setForm] = useState({ ...BLANK_FORM });
-  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const today = todayISO();
+  const loadAppointments = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    const { data, error } = await api.get<{ results: ApiAppointment[] } | ApiAppointment[]>(
+      '/appointments/', true, true,
+    );
+    if (error) Alert.alert('Error', error);
+    else {
+      // Backend already filters by branch+industry for admin role.
+      // Client-side filter acts as a safety net.
+      let raw: ApiAppointment[] = Array.isArray(data) ? data : (data as any)?.results ?? [];
+      if (assignedBranch)   raw = raw.filter(a => a.branch_name === assignedBranch);
+      if (assignedIndustry) {
+        const ind = INDUSTRIES.find(i => i.id === assignedIndustry);
+        if (ind) raw = raw.filter(a => ind.services.includes(a.service_name));
+      }
+      setAppointments(raw);
+    }
+    setLoading(false);
+    setRefreshing(false);
+  }, [assignedBranch, assignedIndustry]);
 
-  const filtered = useMemo(() => {
+  useEffect(() => { loadAppointments(); }, [loadAppointments]);
+
+  const onRefresh = useCallback(() => {
+    clearCache();
+    setRefreshing(true);
+    loadAppointments(true);
+  }, [loadAppointments]);
+
+  // Count appointments per industry
+  const countForIndustry = useCallback((ind: typeof INDUSTRIES[0]) => {
+    return appointments.filter(a => ind.services.includes(a.service_name)).length;
+  }, [appointments]);
+
+  // Appointments for the selected industry, filtered by search
+  const industryAppointments = useMemo(() => {
+    if (!selectedIndustry) return [];
+    const ind = INDUSTRIES.find(i => i.id === selectedIndustry);
+    if (!ind) return [];
     return appointments.filter(a => {
-      const matchTab    = tab === 'all' || a.status === tab;
-      const matchSearch = search.trim() === ''
-        || a.customer.toLowerCase().includes(search.toLowerCase())
-        || a.service.toLowerCase().includes(search.toLowerCase())
-        || a.industry.toLowerCase().includes(search.toLowerCase());
-      return matchTab && matchSearch;
+      const matchInd = ind.services.includes(a.service_name);
+      const q = search.toLowerCase();
+      const matchSearch = !q ||
+        a.customer_name.toLowerCase().includes(q) ||
+        a.service_name.toLowerCase().includes(q) ||
+        a.branch_name.toLowerCase().includes(q);
+      return matchInd && matchSearch;
     });
-  }, [appointments, tab, search]);
+  }, [appointments, selectedIndustry, search]);
 
-  const totalCount     = appointments.length;
-  const upcomingCount  = appointments.filter(a => a.status === 'upcoming').length;
-  const todayCount     = appointments.filter(a => isToday(a.date) && a.status === 'upcoming').length;
+  const selectedMeta = INDUSTRIES.find(i => i.id === selectedIndustry);
 
   const handleCancel = (id: number) => {
     Alert.alert('Cancel Appointment', 'Mark this appointment as cancelled?', [
       { text: 'No', style: 'cancel' },
-      { text: 'Yes, Cancel', style: 'destructive', onPress: () =>
-          setAppointments(prev => prev.map(a => a.id === id ? { ...a, status: 'cancelled' } : a))
-      },
+      { text: 'Yes, Cancel', style: 'destructive', onPress: async () => {
+        const { error } = await api.post(`/appointments/${id}/cancel/`, {});
+        if (error) Alert.alert('Error', error);
+        else loadAppointments(true);
+      }},
     ]);
   };
 
-  const handleComplete = (id: number) => {
-    setAppointments(prev => prev.map(a => a.id === id ? { ...a, status: 'completed' } : a));
+  const handleComplete = async (id: number) => {
+    const { error } = await api.post(`/appointments/${id}/complete/`, {});
+    if (error) Alert.alert('Error', error);
+    else loadAppointments(true);
   };
 
-  const handleDelete = (id: number) => {
-    Alert.alert('Delete Appointment', 'Permanently remove this appointment?', [
-      { text: 'No', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () =>
-          setAppointments(prev => prev.filter(a => a.id !== id))
-      },
-    ]);
-  };
+  // ── Industry list view ────────────────────────────────────────────────────
+  if (!selectedIndustry) {
+    return (
+      <SafeAreaView style={s.container} edges={['top']}>
+        <StatusBar barStyle="dark-content" backgroundColor="#fff" />
 
-  const openModal = () => {
-    setForm({ ...BLANK_FORM, date: todayISO() });
-    setErrors({});
-    setModalVisible(true);
-  };
+        <View style={s.header}>
+          <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/admin/dashboard' as any)} style={s.backBtn}>
+            <MaterialIcons name="arrow-back" size={22} color="#0f172a" />
+          </TouchableOpacity>
+          <Text style={s.headerTitle}>Appointments</Text>
+          <TouchableOpacity style={s.refreshBtn} onPress={onRefresh} disabled={refreshing}>
+            {refreshing
+              ? <ActivityIndicator size="small" color="#2563eb" />
+              : <MaterialIcons name="refresh" size={22} color="#64748b" />
+            }
+          </TouchableOpacity>
+        </View>
 
-  const validateDate = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d);
+        {/* Total banner */}
+        <View style={s.totalBanner}>
+          <MaterialIcons name="event" size={16} color="#2563eb" />
+          <Text style={s.totalTxt}>
+            <Text style={s.totalNum}>{appointments.length}</Text>
+            {assignedBranch
+              ? ` appointment${appointments.length !== 1 ? 's' : ''} at ${assignedBranch}`
+              : ' total appointments across all industries'}
+          </Text>
+        </View>
 
-  const handleAdd = () => {
-    const e: Record<string, string> = {};
-    if (!form.customer.trim()) e.customer = 'Customer name is required';
-    if (!form.service.trim())  e.service  = 'Service is required';
-    if (!form.date.trim())     e.date     = 'Date is required';
-    else if (!validateDate(form.date)) e.date = 'Use format YYYY-MM-DD';
-    if (Object.keys(e).length > 0) { setErrors(e); return; }
-    setAppointments(prev => [{
-      id: Date.now(),
-      customer: form.customer.trim(),
-      service: form.service.trim(),
-      industry: form.industry,
-      date: form.date.trim(),
-      time: form.time,
-      status: 'upcoming',
-      notes: form.notes.trim(),
-    }, ...prev]);
-    setModalVisible(false);
-  };
+        {loading ? (
+          <View style={s.center}>
+            <ActivityIndicator size="large" color="#2563eb" />
+          </View>
+        ) : (
+          <ScrollView
+            contentContainerStyle={s.gridContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#2563eb']} />}
+          >
+            <View style={s.grid}>
+              {visibleIndustries.map(ind => {
+                const count    = countForIndustry(ind);
+                const upcoming = appointments.filter(a =>
+                  ind.services.includes(a.service_name) &&
+                  (a.status === 'scheduled' || a.status === 'confirmed')
+                ).length;
 
-  const tabCount = (key: TabKey) =>
-    key === 'all' ? appointments.length : appointments.filter(a => a.status === key).length;
+                return (
+                  <TouchableOpacity
+                    key={ind.id}
+                    style={[s.industryCard, { borderColor: count > 0 ? ind.color : '#e2e8f0' }]}
+                    onPress={() => { setSelectedIndustry(ind.id); setSearch(''); }}
+                    activeOpacity={0.8}
+                  >
+                    <View style={[s.indIconBox, { backgroundColor: ind.bg }]}>
+                      <MaterialIcons name={ind.icon} size={24} color={ind.color} />
+                    </View>
+
+                    <Text style={s.indLabel} numberOfLines={2}>{ind.label}</Text>
+
+                    <View style={[s.countPill, { backgroundColor: ind.bg }]}>
+                      <Text style={[s.countNum, { color: ind.color }]}>{count}</Text>
+                      <Text style={[s.countLbl, { color: ind.color }]}>appts</Text>
+                    </View>
+
+                    {upcoming > 0 && (
+                      <View style={s.upcomingPill}>
+                        <View style={s.upcomingDot} />
+                        <Text style={s.upcomingTxt}>{upcoming} upcoming</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </ScrollView>
+        )}
+
+        <BottomNav />
+      </SafeAreaView>
+    );
+  }
+
+  // ── Appointments list for selected industry ───────────────────────────────
+  const today = todayISO();
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={s.container} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
 
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/admin/dashboard' as any)}
-          style={styles.backBtn}
-        >
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => { setSelectedIndustry(null); setSearch(''); }} style={s.backBtn}>
           <MaterialIcons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Appointments</Text>
-        <TouchableOpacity style={styles.addHeaderBtn} onPress={openModal} activeOpacity={0.8}>
-          <MaterialIcons name="add" size={18} color="#fff" />
+        <Text style={s.headerTitle} numberOfLines={1}>{selectedMeta?.label}</Text>
+        <TouchableOpacity style={s.refreshBtn} onPress={onRefresh} disabled={refreshing}>
+          {refreshing
+            ? <ActivityIndicator size="small" color="#2563eb" />
+            : <MaterialIcons name="refresh" size={22} color="#64748b" />
+          }
         </TouchableOpacity>
-      </View>
-
-      {/* Stats banner */}
-      <View style={styles.statsBanner}>
-        <View style={styles.statItem}>
-          <Text style={styles.statValue}>{totalCount}</Text>
-          <Text style={styles.statLabel}>Total</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: '#2563eb' }]}>{upcomingCount}</Text>
-          <Text style={styles.statLabel}>Upcoming</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: '#059669' }]}>{todayCount}</Text>
-          <Text style={styles.statLabel}>Today</Text>
-        </View>
       </View>
 
       {/* Search */}
-      <View style={styles.searchWrap}>
-        <MaterialIcons name="search" size={18} color="#94a3b8" style={styles.searchIcon} />
+      <View style={s.searchWrap}>
+        <MaterialIcons name="search" size={18} color="#94a3b8" />
         <TextInput
-          style={styles.searchInput}
-          placeholder="Search by customer, service or industry…"
+          style={s.searchInput}
+          placeholder="Search by customer, service or branch…"
           placeholderTextColor="#94a3b8"
           value={search}
           onChangeText={setSearch}
-          returnKeyType="search"
         />
         {search.length > 0 && (
-          <TouchableOpacity onPress={() => setSearch('')} style={styles.clearBtn}>
-            <MaterialIcons name="close" size={16} color="#94a3b8" />
+          <TouchableOpacity onPress={() => setSearch('')}>
+            <MaterialIcons name="close" size={18} color="#94a3b8" />
           </TouchableOpacity>
         )}
       </View>
 
-      {/* Tabs */}
       <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.tabsScroll}
-        contentContainerStyle={styles.tabsContent}
+        contentContainerStyle={s.listContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#2563eb']} />}
       >
-        {TABS.map(t => (
-          <TouchableOpacity
-            key={t.key}
-            style={[styles.tab, tab === t.key && styles.tabActive]}
-            onPress={() => setTab(t.key)}
-            activeOpacity={0.75}
-          >
-            <Text style={[styles.tabText, tab === t.key && styles.tabTextActive]}>{t.label}</Text>
-            <View style={[styles.tabBadge, tab === t.key && styles.tabBadgeActive]}>
-              <Text style={[styles.tabBadgeText, tab === t.key && styles.tabBadgeTextActive]}>{tabCount(t.key)}</Text>
-            </View>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      {/* List */}
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {filtered.map(appt => {
-          const meta    = STATUS_META[appt.status];
-          const indStyle = INDUSTRY_COLORS[appt.industry] ?? { color: '#475569', bg: '#f1f5f9' };
-          const todayFlag = isToday(appt.date);
-
-          return (
-            <View key={appt.id} style={[styles.card, todayFlag && appt.status === 'upcoming' && styles.cardToday]}>
-              {todayFlag && appt.status === 'upcoming' && (
-                <View style={styles.todayBanner}>
-                  <MaterialIcons name="today" size={11} color="#2563eb" />
-                  <Text style={styles.todayText}>Today</Text>
-                </View>
-              )}
-
-              <View style={styles.cardTop}>
-                {/* Avatar */}
-                <View style={[styles.avatar, { backgroundColor: indStyle.bg }]}>
-                  <Text style={[styles.avatarText, { color: indStyle.color }]}>{initials(appt.customer).toUpperCase()}</Text>
-                </View>
-
-                {/* Info */}
-                <View style={styles.cardInfo}>
-                  <Text style={styles.customerName}>{appt.customer}</Text>
-                  <Text style={styles.serviceName}>{appt.service}</Text>
-                </View>
-
-                {/* Status badge */}
-                <View style={[styles.statusBadge, { backgroundColor: meta.bg }]}>
-                  <MaterialIcons name={meta.icon} size={11} color={meta.color} />
-                  <Text style={[styles.statusText, { color: meta.color }]}>{meta.label}</Text>
-                </View>
-              </View>
-
-              {/* Industry + date/time row */}
-              <View style={styles.metaRow}>
-                <View style={[styles.industryPill, { backgroundColor: indStyle.bg }]}>
-                  <Text style={[styles.industryPillText, { color: indStyle.color }]}>{appt.industry}</Text>
-                </View>
-                <View style={styles.metaItem}>
-                  <MaterialIcons name="event" size={12} color="#94a3b8" />
-                  <Text style={styles.metaText}>{formatDate(appt.date)}</Text>
-                </View>
-                <View style={styles.metaItem}>
-                  <MaterialIcons name="access-time" size={12} color="#94a3b8" />
-                  <Text style={styles.metaText}>{appt.time}</Text>
-                </View>
-              </View>
-
-              {/* Notes */}
-              {!!appt.notes && (
-                <View style={styles.notesRow}>
-                  <MaterialIcons name="notes" size={12} color="#94a3b8" />
-                  <Text style={styles.notesText}>{appt.notes}</Text>
-                </View>
-              )}
-
-              {/* Action buttons */}
-              {appt.status === 'upcoming' ? (
-                <View style={styles.actions}>
-                  <TouchableOpacity style={styles.cancelBtn} onPress={() => handleCancel(appt.id)} activeOpacity={0.8}>
-                    <MaterialIcons name="close" size={13} color="#e11d48" />
-                    <Text style={styles.cancelBtnText}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.completeBtn} onPress={() => handleComplete(appt.id)} activeOpacity={0.8}>
-                    <MaterialIcons name="check" size={13} color="#fff" />
-                    <Text style={styles.completeBtnText}>Mark Complete</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(appt.id)} activeOpacity={0.8}>
-                    <MaterialIcons name="delete-outline" size={15} color="#94a3b8" />
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <View style={styles.actions}>
-                  <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(appt.id)} activeOpacity={0.8}>
-                    <MaterialIcons name="delete-outline" size={15} color="#94a3b8" />
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
-          );
-        })}
-
-        {filtered.length === 0 && (
-          <View style={styles.emptyState}>
+        {industryAppointments.length === 0 ? (
+          <View style={s.empty}>
             <MaterialIcons name="event-busy" size={52} color="#e2e8f0" />
-            <Text style={styles.emptyTitle}>No appointments found</Text>
-            <Text style={styles.emptySubtitle}>
-              {search ? 'Try a different search term.' : 'Tap + to add a new appointment.'}
+            <Text style={s.emptyTitle}>No appointments found</Text>
+            <Text style={s.emptySub}>
+              {search ? 'Try a different search term.' : 'No appointments have been booked in this industry yet.'}
             </Text>
           </View>
+        ) : (
+          industryAppointments.map(appt => {
+            const meta      = STATUS_META[appt.status] ?? STATUS_META.scheduled;
+            const indColor  = selectedMeta?.color ?? '#2563eb';
+            const indBg     = selectedMeta?.bg    ?? '#eff6ff';
+            const isToday   = appt.appointment_date === today;
+
+            return (
+              <View key={appt.id} style={[s.card, isToday && appt.status === 'scheduled' && s.cardToday]}>
+                {isToday && (appt.status === 'scheduled' || appt.status === 'confirmed') && (
+                  <View style={s.todayTag}>
+                    <MaterialIcons name="today" size={11} color="#2563eb" />
+                    <Text style={s.todayTxt}>Today</Text>
+                  </View>
+                )}
+
+                {/* Customer row */}
+                <View style={s.cardTop}>
+                  <View style={[s.avatar, { backgroundColor: indBg }]}>
+                    <Text style={[s.avatarTxt, { color: indColor }]}>{initials(appt.customer_name)}</Text>
+                  </View>
+                  <View style={s.cardInfo}>
+                    <Text style={s.customerName}>{appt.customer_name}</Text>
+                    <Text style={s.serviceName}>{appt.service_name}</Text>
+                  </View>
+                  <View style={[s.statusBadge, { backgroundColor: meta.bg }]}>
+                    <MaterialIcons name={meta.icon} size={11} color={meta.color} />
+                    <Text style={[s.statusTxt, { color: meta.color }]}>{meta.label}</Text>
+                  </View>
+                </View>
+
+                {/* Details row */}
+                <View style={s.detailsRow}>
+                  <View style={s.detailItem}>
+                    <MaterialIcons name="event" size={13} color="#94a3b8" />
+                    <Text style={s.detailTxt}>{formatDate(appt.appointment_date)}</Text>
+                  </View>
+                  <View style={s.detailItem}>
+                    <MaterialIcons name="access-time" size={13} color="#94a3b8" />
+                    <Text style={s.detailTxt}>{formatTime(appt.appointment_time)}</Text>
+                  </View>
+                  <View style={s.detailItem}>
+                    <MaterialIcons name="place" size={13} color="#94a3b8" />
+                    <Text style={s.detailTxt}>{appt.branch_name}</Text>
+                  </View>
+                </View>
+
+                {!!appt.notes && (
+                  <View style={s.notesRow}>
+                    <MaterialIcons name="notes" size={12} color="#94a3b8" />
+                    <Text style={s.notesTxt} numberOfLines={2}>{appt.notes}</Text>
+                  </View>
+                )}
+
+                {/* Actions */}
+                {(appt.status === 'scheduled' || appt.status === 'confirmed') && (
+                  <View style={s.actions}>
+                    <TouchableOpacity style={s.cancelBtn} onPress={() => handleCancel(appt.id)} activeOpacity={0.8}>
+                      <MaterialIcons name="close" size={13} color="#e11d48" />
+                      <Text style={s.cancelTxt}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={s.completeBtn} onPress={() => handleComplete(appt.id)} activeOpacity={0.8}>
+                      <MaterialIcons name="check" size={13} color="#fff" />
+                      <Text style={s.completeTxt}>Mark Complete</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            );
+          })
         )}
         <View style={{ height: 24 }} />
       </ScrollView>
 
       <BottomNav />
-
-      {/* ── Add Appointment Modal ─────────────────────────────── */}
-      <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={() => setModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKAV}>
-            <View style={styles.modalSheet}>
-              <View style={styles.modalHeader}>
-                <View>
-                  <Text style={styles.modalTitle}>New Appointment</Text>
-                  <Text style={styles.modalSubtitle}>Fill in the details below</Text>
-                </View>
-                <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeBtn}>
-                  <MaterialIcons name="close" size={20} color="#64748b" />
-                </TouchableOpacity>
-              </View>
-
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalBody}>
-
-                {/* Customer name */}
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Customer Name *</Text>
-                  <TextInput
-                    style={[styles.input, errors.customer ? styles.inputError : null]}
-                    placeholder="e.g. John Smith"
-                    placeholderTextColor="#94a3b8"
-                    value={form.customer}
-                    onChangeText={v => { setForm(f => ({ ...f, customer: v })); setErrors(e => ({ ...e, customer: '' })); }}
-                    autoCapitalize="words"
-                  />
-                  {!!errors.customer && <Text style={styles.errorText}>{errors.customer}</Text>}
-                </View>
-
-                {/* Industry */}
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Industry</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
-                    {INDUSTRY_LIST.map(ind => (
-                      <TouchableOpacity
-                        key={ind}
-                        style={[styles.pill, form.industry === ind && styles.pillActive]}
-                        onPress={() => setForm(f => ({ ...f, industry: ind }))}
-                        activeOpacity={0.75}
-                      >
-                        <Text style={[styles.pillText, form.industry === ind && styles.pillTextActive]}>{ind}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-
-                {/* Service */}
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Service *</Text>
-                  <TextInput
-                    style={[styles.input, errors.service ? styles.inputError : null]}
-                    placeholder="e.g. Account Opening"
-                    placeholderTextColor="#94a3b8"
-                    value={form.service}
-                    onChangeText={v => { setForm(f => ({ ...f, service: v })); setErrors(e => ({ ...e, service: '' })); }}
-                    autoCapitalize="words"
-                  />
-                  {!!errors.service && <Text style={styles.errorText}>{errors.service}</Text>}
-                </View>
-
-                {/* Date */}
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Date * (YYYY-MM-DD)</Text>
-                  <TextInput
-                    style={[styles.input, errors.date ? styles.inputError : null]}
-                    placeholder="e.g. 2026-05-10"
-                    placeholderTextColor="#94a3b8"
-                    value={form.date}
-                    onChangeText={v => { setForm(f => ({ ...f, date: v })); setErrors(e => ({ ...e, date: '' })); }}
-                    keyboardType="numbers-and-punctuation"
-                  />
-                  {!!errors.date && <Text style={styles.errorText}>{errors.date}</Text>}
-                </View>
-
-                {/* Time */}
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Time</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
-                    {TIME_SLOTS.map(t => (
-                      <TouchableOpacity
-                        key={t}
-                        style={[styles.timePill, form.time === t && styles.timePillActive]}
-                        onPress={() => setForm(f => ({ ...f, time: t }))}
-                        activeOpacity={0.75}
-                      >
-                        <Text style={[styles.timePillText, form.time === t && styles.timePillTextActive]}>{t}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-
-                {/* Notes */}
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Notes (optional)</Text>
-                  <TextInput
-                    style={[styles.input, styles.inputMultiline]}
-                    placeholder="Any additional notes…"
-                    placeholderTextColor="#94a3b8"
-                    value={form.notes}
-                    onChangeText={v => setForm(f => ({ ...f, notes: v }))}
-                    multiline
-                    numberOfLines={3}
-                    textAlignVertical="top"
-                  />
-                </View>
-
-                <TouchableOpacity style={styles.submitBtn} onPress={handleAdd} activeOpacity={0.85}>
-                  <MaterialIcons name="event-available" size={18} color="#fff" />
-                  <Text style={styles.submitBtnText}>Book Appointment</Text>
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
-          </KeyboardAvoidingView>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
+// ── Styles ─────────────────────────────────────────────────────────────────────
+
+const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
 
-  // Header
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 14,
     borderBottomWidth: 1, borderBottomColor: '#e2e8f0',
   },
-  backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
-  addHeaderBtn: {
-    width: 36, height: 36, borderRadius: 12, backgroundColor: '#2563eb',
-    alignItems: 'center', justifyContent: 'center',
+  backBtn:     { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a', flex: 1, textAlign: 'center' },
+  refreshBtn:  { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+
+  totalBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#eff6ff', paddingHorizontal: 16, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: '#bfdbfe',
+  },
+  totalTxt: { fontSize: 13, color: '#1d4ed8', fontWeight: '600' },
+  totalNum: { fontWeight: '900', fontSize: 14 },
+
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+  // Industry grid — 3 columns × 2 rows
+  gridContent: { padding: 16, paddingBottom: 32 },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 12,
   },
 
-  // Stats banner
-  statsBanner: {
-    flexDirection: 'row', backgroundColor: '#fff',
-    paddingVertical: 14, paddingHorizontal: 20,
-    borderBottomWidth: 1, borderBottomColor: '#e2e8f0',
+  industryCard: {
+    width: '32%',
+    backgroundColor: '#fff', borderRadius: 16, padding: 12,
+    borderWidth: 1.5, alignItems: 'center', gap: 8,
   },
-  statItem: { flex: 1, alignItems: 'center', gap: 2 },
-  statValue: { fontSize: 22, fontWeight: '900', color: '#0f172a' },
-  statLabel: { fontSize: 11, fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.3 },
-  statDivider: { width: 1, backgroundColor: '#e2e8f0', marginVertical: 4 },
+  indIconBox: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  indLabel:   { fontSize: 11, fontWeight: '800', color: '#0f172a', textAlign: 'center' },
+  countPill:  { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
+  countNum:   { fontSize: 14, fontWeight: '900' },
+  countLbl:   { fontSize: 9,  fontWeight: '700' },
+  upcomingPill: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  upcomingDot:  { width: 5, height: 5, borderRadius: 3, backgroundColor: '#059669' },
+  upcomingTxt:  { fontSize: 9, fontWeight: '700', color: '#059669' },
 
   // Search
   searchWrap: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#fff', marginHorizontal: 16, marginTop: 12, marginBottom: 4,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#fff', marginHorizontal: 16, marginVertical: 10,
     borderRadius: 14, borderWidth: 1.5, borderColor: '#e2e8f0', paddingHorizontal: 12,
   },
-  searchIcon: { marginRight: 8 },
   searchInput: { flex: 1, fontSize: 13, color: '#0f172a', paddingVertical: 11 },
-  clearBtn: { padding: 4 },
 
-  // Tabs
-  tabsScroll: { backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0', marginTop: 8 },
-  tabsContent: { paddingHorizontal: 16, gap: 4 },
-  tab: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4, paddingVertical: 12, borderBottomWidth: 2, borderBottomColor: 'transparent' },
-  tabActive: { borderBottomColor: '#2563eb' },
-  tabText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
-  tabTextActive: { color: '#2563eb', fontWeight: '800' },
-  tabBadge: { backgroundColor: '#f1f5f9', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },
-  tabBadgeActive: { backgroundColor: '#eff6ff' },
-  tabBadgeText: { fontSize: 10, fontWeight: '700', color: '#94a3b8' },
-  tabBadgeTextActive: { color: '#2563eb' },
+  // Appointment list
+  listContent: { padding: 16, gap: 12, paddingBottom: 32 },
 
-  // Content
-  content: { padding: 16, gap: 10, paddingBottom: 16 },
-
-  // Cards
   card: {
-    backgroundColor: '#fff', borderRadius: 20, padding: 16,
+    backgroundColor: '#fff', borderRadius: 18, padding: 14,
     borderWidth: 1, borderColor: '#e2e8f0', gap: 10,
   },
-  cardToday: { borderColor: '#bfdbfe', borderWidth: 1.5 },
-  todayBanner: {
+  cardToday: { borderColor: '#93c5fd', borderWidth: 1.5 },
+
+  todayTag: {
     flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start',
     backgroundColor: '#eff6ff', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
   },
-  todayText: { fontSize: 10, fontWeight: '800', color: '#2563eb', textTransform: 'uppercase', letterSpacing: 0.4 },
+  todayTxt: { fontSize: 10, fontWeight: '800', color: '#2563eb', textTransform: 'uppercase' },
 
-  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  avatar: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontSize: 15, fontWeight: '900' },
-  cardInfo: { flex: 1 },
+  cardTop:      { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  avatar:       { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  avatarTxt:    { fontSize: 15, fontWeight: '900' },
+  cardInfo:     { flex: 1 },
   customerName: { fontSize: 14, fontWeight: '800', color: '#0f172a' },
-  serviceName: { fontSize: 12, fontWeight: '500', color: '#64748b', marginTop: 2 },
-  statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999 },
-  statusText: { fontSize: 10, fontWeight: '800' },
+  serviceName:  { fontSize: 12, color: '#64748b', fontWeight: '500', marginTop: 2 },
+  statusBadge:  { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
+  statusTxt:    { fontSize: 10, fontWeight: '800' },
 
-  metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
-  industryPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
-  industryPillText: { fontSize: 10, fontWeight: '700' },
-  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  metaText: { fontSize: 12, color: '#64748b', fontWeight: '500' },
+  detailsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  detailItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  detailTxt:  { fontSize: 12, color: '#64748b', fontWeight: '500' },
 
   notesRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 5 },
-  notesText: { fontSize: 12, color: '#94a3b8', fontStyle: 'italic', flex: 1 },
+  notesTxt: { fontSize: 12, color: '#94a3b8', fontStyle: 'italic', flex: 1 },
 
-  actions: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 4, borderTopWidth: 1, borderTopColor: '#f1f5f9' },
-  cancelBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
-    paddingVertical: 9, borderRadius: 10, backgroundColor: '#fff1f2',
-    borderWidth: 1, borderColor: '#fecaca',
-  },
-  cancelBtnText: { fontSize: 12, fontWeight: '700', color: '#e11d48' },
-  completeBtn: {
-    flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
-    paddingVertical: 9, borderRadius: 10, backgroundColor: '#059669',
-  },
-  completeBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
-  deleteBtn: {
-    width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0',
-  },
+  actions:     { flexDirection: 'row', gap: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#f1f5f9' },
+  cancelBtn:   { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 10, backgroundColor: '#fff1f2', borderWidth: 1, borderColor: '#fecaca' },
+  cancelTxt:   { fontSize: 12, fontWeight: '700', color: '#e11d48' },
+  completeBtn: { flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 10, backgroundColor: '#059669' },
+  completeTxt: { fontSize: 12, fontWeight: '700', color: '#fff' },
 
-  emptyState: { alignItems: 'center', paddingVertical: 60, gap: 10 },
+  empty:      { alignItems: 'center', paddingVertical: 60, gap: 10 },
   emptyTitle: { fontSize: 16, fontWeight: '800', color: '#64748b' },
-  emptySubtitle: { fontSize: 13, fontWeight: '500', color: '#94a3b8' },
-
-  // Modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.45)', justifyContent: 'flex-end' },
-  modalKAV: { justifyContent: 'flex-end' },
-  modalSheet: { backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: '92%', paddingBottom: 32 },
-  modalHeader: {
-    flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
-    padding: 20, borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
-  },
-  modalTitle: { fontSize: 20, fontWeight: '900', color: '#0f172a' },
-  modalSubtitle: { fontSize: 13, color: '#64748b', marginTop: 2 },
-  closeBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' },
-  modalBody: { padding: 20, gap: 16, paddingBottom: 8 },
-
-  fieldGroup: { gap: 6 },
-  fieldLabel: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
-  input: {
-    borderWidth: 1.5, borderColor: '#e2e8f0', borderRadius: 14,
-    paddingHorizontal: 14, paddingVertical: 12,
-    fontSize: 14, color: '#0f172a', backgroundColor: '#f8fafc',
-  },
-  inputMultiline: { height: 80, paddingTop: 12 },
-  inputError: { borderColor: '#e11d48' },
-  errorText: { fontSize: 11, color: '#e11d48', fontWeight: '600' },
-
-  pillRow: { gap: 8, paddingVertical: 4 },
-  pill: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: '#f1f5f9', borderWidth: 1.5, borderColor: '#e2e8f0' },
-  pillActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-  pillText: { fontSize: 12, fontWeight: '700', color: '#475569' },
-  pillTextActive: { color: '#fff' },
-
-  timePill: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, backgroundColor: '#f1f5f9', borderWidth: 1.5, borderColor: '#e2e8f0' },
-  timePillActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-  timePillText: { fontSize: 12, fontWeight: '700', color: '#475569' },
-  timePillTextActive: { color: '#fff' },
-
-  submitBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#2563eb', paddingVertical: 15, borderRadius: 16, marginTop: 4 },
-  submitBtnText: { fontSize: 15, fontWeight: '800', color: '#fff' },
+  emptySub:   { fontSize: 13, color: '#94a3b8', textAlign: 'center', paddingHorizontal: 24 },
 });

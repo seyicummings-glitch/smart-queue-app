@@ -44,7 +44,7 @@ function toArr<T>(d: any): T[] {
   return Array.isArray(d) ? d : (d?.results ?? []);
 }
 
-export default function StaffSupport() {
+export default function AdminCustomerSupport() {
   const router = useRouter();
 
   const [messages,   setMessages]   = useState<Msg[]>([]);
@@ -61,7 +61,6 @@ export default function StaffSupport() {
     const { data } = await api.get<any>('/notifications/messages/conversations/', true, true);
     if (data != null) {
       const all = toArr<Msg>(data);
-      // Only show messages sent by customers
       setMessages(all.filter(m => m.sender_role === 'customer'));
     }
     setLoading(false);
@@ -74,7 +73,6 @@ export default function StaffSupport() {
     return () => clearInterval(t);
   }, [fetchMessages]);
 
-  // Keep selected conversation in sync with background refresh
   useEffect(() => {
     if (selected) {
       const updated = messages.find(m => m.id === selected.id);
@@ -121,7 +119,7 @@ export default function StaffSupport() {
       {/* Header */}
       <View style={s.header}>
         <TouchableOpacity
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/staff/dashboard' as any)}
+          onPress={() => router.canGoBack() ? router.back() : router.replace('/admin/dashboard' as any)}
           style={s.backBtn}
         >
           <MaterialIcons name="arrow-back" size={22} color="#0f172a" />
@@ -142,14 +140,14 @@ export default function StaffSupport() {
       {/* Message list */}
       {loading ? (
         <View style={s.center}>
-          <ActivityIndicator size="large" color="#059669" />
+          <ActivityIndicator size="large" color="#2563eb" />
         </View>
       ) : (
         <ScrollView
           contentContainerStyle={s.content}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#2563eb']} />
           }
         >
           {messages.length === 0 ? (
@@ -196,7 +194,7 @@ export default function StaffSupport() {
 
                 {(msg.replies?.length ?? 0) > 0 && (
                   <View style={s.replyRow}>
-                    <MaterialIcons name="forum" size={12} color="#059669" />
+                    <MaterialIcons name="forum" size={12} color="#2563eb" />
                     <Text style={s.replyTxt}>
                       {msg.replies.length} repl{msg.replies.length > 1 ? 'ies' : 'y'}
                     </Text>
@@ -239,12 +237,12 @@ export default function StaffSupport() {
 
                   {/* Replies */}
                   {(selected.replies ?? []).map(r => {
-                    const isMe = r.sender_role === 'staff';
+                    const isMe = r.sender_role === 'admin' || r.sender_role === 'super_admin';
                     return (
                       <View key={r.id} style={[s.bubble, isMe ? s.bubbleMe : s.bubbleOther]}>
                         <View style={s.bubbleHead}>
-                          <Text style={[s.bubbleFrom, { color: isMe ? '#059669' : '#2563eb' }]}>
-                            {isMe ? 'You (Staff)' : r.sender_name}
+                          <Text style={[s.bubbleFrom, { color: isMe ? '#2563eb' : '#059669' }]}>
+                            {isMe ? 'You (Admin)' : r.sender_name}
                           </Text>
                           <Text style={s.bubbleTime}>{timeAgo(r.created_at)}</Text>
                         </View>
@@ -310,22 +308,22 @@ const s = StyleSheet.create({
     backgroundColor: '#fff', borderRadius: 16, padding: 14,
     borderWidth: 1, borderColor: '#e2e8f0', gap: 8,
   },
-  cardUnread: { borderColor: '#059669', borderWidth: 1.5 },
+  cardUnread: { borderColor: '#2563eb', borderWidth: 1.5 },
   cardTop:  { flexDirection: 'row', alignItems: 'center', gap: 10 },
   avatar: {
     width: 42, height: 42, borderRadius: 13,
-    backgroundColor: '#d97706' + '20', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#2563eb' + '20', alignItems: 'center', justifyContent: 'center',
   },
-  avatarTxt:  { fontSize: 16, fontWeight: '900', color: '#d97706' },
+  avatarTxt:  { fontSize: 16, fontWeight: '900', color: '#2563eb' },
   cardInfo:   { flex: 1 },
   senderName: { fontSize: 14, fontWeight: '800', color: '#0f172a' },
   subject:    { fontSize: 12, color: '#64748b', fontWeight: '500', marginTop: 2 },
   cardRight:  { alignItems: 'flex-end', gap: 4 },
   time:       { fontSize: 11, color: '#94a3b8', fontWeight: '500' },
-  unreadDot:  { width: 8, height: 8, borderRadius: 4, backgroundColor: '#059669' },
+  unreadDot:  { width: 8, height: 8, borderRadius: 4, backgroundColor: '#2563eb' },
   preview:    { fontSize: 13, color: '#64748b', lineHeight: 18 },
   replyRow:   { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  replyTxt:   { fontSize: 11, fontWeight: '700', color: '#059669' },
+  replyTxt:   { fontSize: 11, fontWeight: '700', color: '#2563eb' },
 
   empty:      { alignItems: 'center', paddingVertical: 60, gap: 8 },
   emptyTitle: { fontSize: 16, fontWeight: '700', color: '#64748b' },
@@ -344,8 +342,8 @@ const s = StyleSheet.create({
   modalFrom:  { fontSize: 12, color: '#64748b', fontWeight: '600', marginTop: 3 },
 
   bubble:      { backgroundColor: '#f1f5f9', borderRadius: 14, padding: 14, marginBottom: 10 },
-  bubbleMe:    { backgroundColor: '#ecfdf5' },
-  bubbleOther: { backgroundColor: '#eff6ff' },
+  bubbleMe:    { backgroundColor: '#eff6ff' },
+  bubbleOther: { backgroundColor: '#ecfdf5' },
   bubbleHead:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
   bubbleFrom:  { fontSize: 12, fontWeight: '700', color: '#d97706' },
   bubbleTime:  { fontSize: 11, color: '#94a3b8' },
@@ -362,6 +360,6 @@ const s = StyleSheet.create({
   },
   sendBtn: {
     width: 44, height: 44, borderRadius: 12,
-    backgroundColor: '#059669', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#2563eb', alignItems: 'center', justifyContent: 'center',
   },
 });

@@ -27,10 +27,11 @@ export interface User {
   email_verified?: boolean;
   created_at: string;
   updated_at: string;
-  // Staff assignment fields
+  // Staff/admin assignment fields
   counter_number?: number | null;
   assigned_branch_name?: string | null;
   assigned_services_names?: string[];
+  business_industry?: string | null;
 }
 
 export interface Industry {

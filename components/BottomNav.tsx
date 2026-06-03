@@ -22,19 +22,19 @@ const CUSTOMER_TABS: Tab[] = [
 ];
 
 const STAFF_TABS: Tab[] = [
-  { key: 'dashboard',     label: 'Dashboard',     icon: 'dashboard',    route: '/staff/dashboard'        },
-  { key: 'my-counter',    label: 'My Counter',    icon: 'person-pin',   route: '/staff/queues'           },
-  { key: 'appointments',  label: 'Appointments',  icon: 'event',        route: '/customer/appointments'  },
-  { key: 'notifications', label: 'Alerts',        icon: 'notifications',route: '/notifications'          },
-  { key: 'chat',          label: 'Chat',          icon: 'chat',         route: '/staff/chat'             },
+  { key: 'dashboard',    label: 'Dashboard',    icon: 'dashboard',     route: '/staff/dashboard'    },
+  { key: 'my-counter',   label: 'My Counter',   icon: 'person-pin',    route: '/staff/queues'       },
+  { key: 'appointments', label: 'Appointments', icon: 'event',         route: '/staff/appointments' },
+  { key: 'support',      label: 'Support',      icon: 'support-agent', route: '/staff/messages'     },
+  { key: 'chat',         label: 'Chat',         icon: 'chat',          route: '/staff/chat'         },
 ];
 
 const ADMIN_TABS: Tab[] = [
-  { key: 'dashboard',     label: 'Dashboard',     icon: 'dashboard',    route: '/admin/dashboard'        },
-  { key: 'appointments',  label: 'Appointments',  icon: 'event',        route: '/customer/appointments'  },
-  { key: 'queue',         label: 'Queue',         icon: 'list-alt',     route: '/admin/queue-status'     },
-  { key: 'notifications', label: 'Alerts',        icon: 'notifications',route: '/notifications'          },
-  { key: 'chat',          label: 'Chat',          icon: 'chat',         route: '/admin/messages'         },
+  { key: 'dashboard',     label: 'Dashboard',     icon: 'dashboard',     route: '/admin/dashboard'    },
+  { key: 'appointments',  label: 'Appointments',  icon: 'event',         route: '/admin/appointments' },
+  { key: 'queue',         label: 'Queue',         icon: 'list-alt',      route: '/admin/queue-status' },
+  { key: 'support',        label: 'Support',       icon: 'support-agent', route: '/admin/customer-support' },
+  { key: 'chat',          label: 'Chat',          icon: 'chat',          route: '/admin/messages'     },
 ];
 
 export default function BottomNav() {

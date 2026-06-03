@@ -54,16 +54,6 @@ const ADMIN_ACTIONS: QuickAction[] = [
     route: '/admin/employees',
   },
   {
-    key: 'appointments',
-    label: 'Appointments',
-    sub: 'Bookings & schedule',
-    icon: 'event',
-    color: '#4f46e5',
-    bg: '#eef2ff',
-    border: '#c7d2fe',
-    route: '/admin/appointments',
-  },
-  {
     key: 'analytics',
     label: 'Analytics',
     sub: 'Reports & insights',
@@ -82,16 +72,6 @@ const ADMIN_ACTIONS: QuickAction[] = [
     bg: '#fff1f2',
     border: '#fecdd3',
     route: '/admin/support',
-  },
-  {
-    key: 'settings',
-    label: 'System Settings',
-    sub: 'Services, branches & rules',
-    icon: 'tune',
-    color: '#475569',
-    bg: '#f1f5f9',
-    border: '#cbd5e1',
-    route: '/admin/industry-selection',
   },
 ];
 
@@ -234,21 +214,27 @@ export default function AdminDashboard() {
             <Text style={s.greet}>{greeting()},</Text>
             <Text style={s.heroName}>{firstName}</Text>
             <Text style={s.heroDate}>{fmtDate()}</Text>
+
+            {!isSuperAdmin && !!user?.assigned_branch_name && (
+              <View style={s.heroBranchBlock}>
+                <View style={s.heroBranchRow}>
+                  <MaterialIcons name="place" size={12} color="rgba(255,255,255,0.7)" />
+                  <Text style={s.heroBranchTxt}>{user.assigned_branch_name}</Text>
+                </View>
+                {(user.assigned_services_names?.length ?? 0) > 0 && (
+                  <View style={s.heroServicesRow}>
+                    {user.assigned_services_names!.map((svc, i) => (
+                      <View key={i} style={s.heroServiceChip}>
+                        <Text style={s.heroServiceChipTxt}>{svc}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
           </View>
           <View style={s.heroRight}>
             <Text style={s.heroClock}>{clock}</Text>
-            <TouchableOpacity
-              style={s.notifBtn}
-              onPress={() => router.push('/notifications' as any)}
-              activeOpacity={0.8}
-            >
-              <MaterialIcons name="notifications-none" size={20} color="#2563eb" />
-              {unread > 0 && (
-                <View style={s.notifBadge}>
-                  <Text style={s.notifBadgeTxt}>{unread > 9 ? '9+' : unread}</Text>
-                </View>
-              )}
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -422,6 +408,16 @@ const s = StyleSheet.create({
   greet:    { fontSize: 13, color: 'rgba(255,255,255,0.65)', fontWeight: '500' },
   heroName: { fontSize: 26, fontWeight: '900', color: '#fff', letterSpacing: -0.5, lineHeight: 32 },
   heroDate: { fontSize: 12, color: 'rgba(255,255,255,0.5)', marginTop: 4, fontWeight: '500' },
+
+  heroBranchBlock:   { marginTop: 10, gap: 6 },
+  heroBranchRow:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  heroBranchTxt:     { fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.85)' },
+  heroServicesRow:   { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
+  heroServiceChip:   {
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
+  },
+  heroServiceChipTxt:{ fontSize: 10, fontWeight: '700', color: 'rgba(255,255,255,0.9)' },
 
   heroClock: { fontSize: 22, fontWeight: '800', color: '#fff', letterSpacing: 0.5 },
   notifBtn: {
