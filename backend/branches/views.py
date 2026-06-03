@@ -1,6 +1,7 @@
 from rest_framework import generics, filters, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from .models import Branch
 from .serializers import BranchSerializer
 from accounts.permissions import IsAdminOrSuperAdmin, IsStaffOrAbove
@@ -82,17 +83,20 @@ class BranchListCreateView(generics.ListCreateAPIView):
 
     def get_permissions(self):
         if self.request.method == 'GET':
-            return [IsStaffOrAbove()]
+            return [IsAuthenticated()]
         return [IsAdminOrSuperAdmin()]
 
     def get_queryset(self):
         user = self.request.user
         qs   = Branch.objects.select_related('business')
         business_id = self.request.query_params.get('business')
+        industry    = self.request.query_params.get('industry')
         if business_id:
             qs = qs.filter(business_id=business_id)
         elif user.role == 'admin' and user.business:
             qs = qs.filter(business=user.business)
+        if industry:
+            qs = qs.filter(business__industry=industry)
         return qs
 
 

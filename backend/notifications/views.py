@@ -168,6 +168,22 @@ class StaffMessageReplyView(APIView):
         return Response(StaffMessageReplySerializer(reply).data, status=status.HTTP_201_CREATED)
 
 
+class StaffMessageDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        from django.db.models import Q
+        user = request.user
+        try:
+            msg = StaffMessage.objects.get(
+                Q(pk=pk) & (Q(sender=user) | Q(recipient_role=user.role))
+            )
+        except StaffMessage.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        msg.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class StaffMessageUnreadCountView(APIView):
     permission_classes = [IsAuthenticated]
 

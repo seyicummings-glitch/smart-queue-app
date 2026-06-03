@@ -7,6 +7,7 @@ class UserSerializer(serializers.ModelSerializer):
     business                = serializers.SerializerMethodField()
     assigned_branch_name    = serializers.SerializerMethodField()
     assigned_services_names = serializers.SerializerMethodField()
+    business_industry       = serializers.SerializerMethodField()
 
     def get_business(self, obj):
         return obj.business_id
@@ -17,11 +18,14 @@ class UserSerializer(serializers.ModelSerializer):
     def get_assigned_services_names(self, obj):
         return list(obj.assigned_services.values_list('name', flat=True))
 
+    def get_business_industry(self, obj):
+        return obj.business.industry if obj.business else None
+
     class Meta:
         model  = User
         fields = (
             'id', 'email', 'full_name', 'role', 'phone', 'date_of_birth',
-            'business', 'email_verified', 'created_at',
+            'business', 'business_industry', 'email_verified', 'created_at',
             'counter_number', 'assigned_branch_name', 'assigned_services_names',
         )
         read_only_fields = ('id', 'email_verified', 'created_at')

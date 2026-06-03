@@ -20,10 +20,15 @@ class AppointmentListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         user    = self.request.user
         is_staff = user.role in ('staff', 'admin', 'super_admin')
-        qs = Appointment.objects.select_related('customer', 'service', 'branch')
+        qs = Appointment.objects.select_related('customer', 'service', 'branch__business')
 
         if not is_staff:
             qs = qs.filter(customer=user)
+        elif user.role == 'admin':
+            if user.assigned_branch:
+                qs = qs.filter(branch=user.assigned_branch)
+            if user.business:
+                qs = qs.filter(branch__business__industry=user.business.industry)
 
         status_filter = self.request.query_params.get('status')
         service       = self.request.query_params.get('service')
