@@ -29,6 +29,16 @@ class AppointmentListCreateView(generics.ListCreateAPIView):
                 qs = qs.filter(branch=user.assigned_branch)
             if user.business:
                 qs = qs.filter(branch__business__industry=user.business.industry)
+        elif user.role == 'staff':
+            # Staff only sees appointments for their assigned services
+            assigned_ids   = list(user.assigned_services.values_list('id', flat=True))
+            assigned_names = list(user.assigned_services.values_list('name', flat=True))
+            if assigned_ids or assigned_names:
+                from django.db.models import Q
+                qs = qs.filter(
+                    Q(service_id__in=assigned_ids) |
+                    Q(service_name_text__in=assigned_names)
+                )
 
         status_filter = self.request.query_params.get('status')
         service       = self.request.query_params.get('service')
