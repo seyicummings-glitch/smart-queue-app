@@ -553,9 +553,17 @@ export default function AppointmentsScreen() {
       groups = groups.filter(g => publishedIds.includes(g.industryId));
     }
     if (role === 'staff' && staffServices !== null && staffServices.length > 0) {
-      // Filter by BOTH industry and service name to avoid cross-industry name collisions
-      const assignedIndustries = new Set(staffServices.map(s => s.industry));
-      groups = groups.filter(g => assignedIndustries.has(g.industryId));
+      // Filter by industry — ignore services with no industry (fall back to name match)
+      const assignedIndustries = new Set(
+        staffServices.map(s => s.industry).filter(Boolean)
+      );
+      const assignedNames = new Set(staffServices.map(s => s.name));
+      if (assignedIndustries.size > 0) {
+        groups = groups.filter(g => assignedIndustries.has(g.industryId));
+      } else {
+        // Fallback: filter by service name if industries are missing
+        groups = groups.filter(g => g.services.some(s => assignedNames.has(s.name)));
+      }
     }
     return groups;
   }, [publishedIds, role, staffServices]);
@@ -876,9 +884,11 @@ export default function AppointmentsScreen() {
               </View>
             ) : visibleGroups.map(group => {
               // Only show services this staff member is actually assigned to
-              const assignedServiceNames = staffServices?.filter(s => s.industry === group.industryId).map(s => s.name);
+              const assignedServiceNames = (staffServices && staffServices.length > 0)
+                ? staffServices.filter(s => !s.industry || s.industry === group.industryId).map(s => s.name)
+                : null;
               const assignedServices = group.services.filter(svc =>
-                !assignedServiceNames || assignedServiceNames.includes(svc.name)
+                !assignedServiceNames || assignedServiceNames.length === 0 || assignedServiceNames.includes(svc.name)
               );
               return (
                 <View key={group.industry}>
