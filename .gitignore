@@ -55,3 +55,6 @@ backend/.env
 
 # Cloudflare binary
 cloudflared.exe
+
+# Claude AI memory and conversation files
+.claude/
