@@ -1,0 +1,59 @@
+{
+  "folders": [
+    {
+      "name": "Frontend — React Native / Expo",
+      "path": "."
+    },
+    {
+      "name": "Backend — Django REST API",
+      "path": "./backend"
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/node_modules": true,
+      "**/.expo": true,
+      "**/.expo-shared": true,
+      "**/dist": true,
+      "**/__pycache__": true,
+      "**/*.pyc": true,
+      "**/backend/venv": true,
+      "**/.venv": true,
+      "**/*.egg-info": true,
+      "**/.git": false
+    },
+    "search.exclude": {
+      "**/node_modules": true,
+      "**/backend/venv": true,
+      "**/.venv": true,
+      "**/__pycache__": true
+    },
+    "explorer.fileNesting.enabled": true,
+    "explorer.fileNesting.patterns": {
+      "package.json": "package-lock.json, yarn.lock, .npmrc, .nvmrc",
+      "tsconfig.json": "tsconfig.*.json",
+      "app.json": "app.config.*, expo-env.d.ts, eas.json",
+      "*.ts": "${capture}.js",
+      "*.tsx": "${capture}.js"
+    },
+    "[python]": {
+      "editor.defaultFormatter": "ms-python.python"
+    },
+    "[typescript]": {
+      "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[typescriptreact]": {
+      "editor.defaultFormatter": "esbenp.prettier-vscode"
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-python.vscode-pylance",
+      "esbenp.prettier-vscode",
+      "dbaeumer.vscode-eslint",
+      "expo.vscode-expo-tools",
+      "bradlc.vscode-tailwindcss"
+    ]
+  }
+}

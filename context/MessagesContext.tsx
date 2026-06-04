@@ -57,56 +57,9 @@ type MessagesCtx = {
 
 const Ctx = createContext<MessagesCtx | null>(null);
 
-const SEED_TICKETS: SupportTicket[] = [
-  {
-    id: 't1', from: 'customer', fromName: 'John Doe', to: 'staff',
-    subject: 'Long wait time at Downtown branch',
-    body: 'I have been waiting for over 2 hours. The estimated wait shown was 30 minutes.',
-    category: 'complaint', status: 'open',
-    timestamp: new Date(Date.now() - 3_600_000).toISOString(),
-    replies: [], isRead: false,
-  },
-  {
-    id: 't2', from: 'customer', fromName: 'Jane Smith', to: 'admin',
-    subject: 'Cannot book appointment online',
-    body: 'The appointment booking system shows an error when I try to select a time slot.',
-    category: 'technical', status: 'in_progress',
-    timestamp: new Date(Date.now() - 7_200_000).toISOString(),
-    replies: [
-      { id: 'r1', from: 'admin', fromName: 'Admin Team',
-        body: 'We are looking into this issue. Thank you for your patience.',
-        timestamp: new Date(Date.now() - 3_600_000).toISOString() },
-    ],
-    isRead: true,
-  },
-];
+const SEED_TICKETS: SupportTicket[] = [];
 
-const SEED_MESSAGES: InternalMessage[] = [
-  {
-    id: 'm1', from: 'staff', fromName: 'Sarah Johnson', to: 'admin',
-    subject: 'Queue overflow — Northside Branch',
-    body: 'We are experiencing unusually high traffic today and need additional resources assigned.',
-    type: 'message',
-    timestamp: new Date(Date.now() - 1_800_000).toISOString(),
-    replies: [], isRead: false,
-  },
-  {
-    id: 'm2', from: 'super_admin', fromName: 'Super Admin', to: 'admin',
-    subject: 'New compliance guidelines effective Monday',
-    body: 'Please review the updated compliance guidelines and distribute to your teams before Monday.',
-    type: 'announcement',
-    timestamp: new Date(Date.now() - 86_400_000).toISOString(),
-    replies: [], isRead: false,
-  },
-  {
-    id: 'm3', from: 'admin', fromName: 'Admin Team', to: 'staff',
-    subject: 'Reminder: System maintenance this weekend',
-    body: 'The queue management system will be under maintenance Saturday 11pm–2am. Please inform customers.',
-    type: 'announcement',
-    timestamp: new Date(Date.now() - 43_200_000).toISOString(),
-    replies: [], isRead: false,
-  },
-];
+const SEED_MESSAGES: InternalMessage[] = [];
 
 export function MessagesProvider({ children }: { children: ReactNode }) {
   const [tickets, setTickets] = useState<SupportTicket[]>(SEED_TICKETS);

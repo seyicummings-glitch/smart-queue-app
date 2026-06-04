@@ -37,6 +37,7 @@ type DjangoUser = {
   counter_number?:         number | null;
   assigned_branch_name?:   string | null;
   assigned_services_names?: string[];
+  business_industry?:      string | null;
 };
 
 type AuthResponse = {
@@ -58,6 +59,7 @@ function toUser(d: DjangoUser): User {
     counter_number:          d.counter_number ?? null,
     assigned_branch_name:    d.assigned_branch_name ?? null,
     assigned_services_names: d.assigned_services_names ?? [],
+    business_industry:       d.business_industry ?? null,
   };
 }
 

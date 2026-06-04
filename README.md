@@ -1,50 +1,75 @@
-# Welcome to your Expo app 👋
+# SmartQueue — Queue Management System
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A full-stack Queue Management System built with React Native (Expo) and Django REST Framework.
 
-## Get started
+---
 
-1. Install dependencies
+## Project Structure
 
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```
+SmartQueueApp/
+│
+├── 📱 FRONTEND — React Native / Expo
+│   ├── app/                  ← All screens
+│   │   ├── customer/         ← Customer screens
+│   │   ├── staff/            ← Staff screens
+│   │   ├── admin/            ← Admin screens
+│   │   └── notifications.tsx ← Notifications
+│   ├── components/           ← Reusable UI components
+│   ├── context/              ← Global state (Auth, App, Notifications)
+│   ├── lib/                  ← API client (lib/api.ts)
+│   ├── assets/               ← Images and fonts
+│   ├── package.json          ← Frontend dependencies
+│   └── app.json              ← Expo configuration
+│
+└── 🔧 BACKEND — Django REST API
+    └── backend/
+        ├── accounts/         ← User auth, roles, JWT
+        ├── appointments/     ← Appointment booking
+        ├── branches/         ← Branch management
+        ├── businesses/       ← Business & industry
+        ├── notifications/    ← Notifications & messaging
+        ├── queues/           ← Live queue management
+        ├── services/         ← Services per industry
+        ├── analytics/        ← Reports & analytics
+        └── manage.py         ← Django CLI
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+---
 
-## Learn more
+## Tech Stack
 
-To learn more about developing your project with Expo, look at the following resources:
+| Layer    | Technology                      |
+|----------|---------------------------------|
+| Frontend | React Native, Expo, TypeScript  |
+| Backend  | Django, Django REST Framework   |
+| Auth     | JWT (SimpleJWT)                 |
+| Database | PostgreSQL (Railway)            |
+| Hosting  | Railway                         |
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+---
 
-## Join the community
+## Running the App
 
-Join our community of developers creating universal apps.
+### Frontend
+```bash
+npx expo start
+```
+Scan the QR code with **Expo Go** on your phone.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+### Backend
+```bash
+cd backend
+python manage.py runserver
+```
+
+---
+
+## User Roles
+
+| Role        | Access                                               |
+|-------------|------------------------------------------------------|
+| Customer    | Book appointments, join queue, support tickets       |
+| Staff       | Manage counter, assigned queue & appointments        |
+| Admin       | Manage branch employees & appointments (own branch)  |
+| Super Admin | Full platform access — all businesses & analytics    |

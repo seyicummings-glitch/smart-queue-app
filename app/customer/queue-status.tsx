@@ -66,16 +66,21 @@ export default function CustomerQueueStatus() {
   const [loading,      setLoading]      = useState(true);
   const [leaving,      setLeaving]      = useState(false);
   const [wasCompleted, setWasCompleted] = useState(false);
+  const consecutiveErrors = useRef(0);
 
   const fetchTicket = useCallback(async () => {
-    const { data, error } = await api.get<ActiveTicket>('/queues/my-ticket/');
+    const { data, error } = await api.get<ActiveTicket>('/queues/my-ticket/', true, true);
     if (error || !data) {
-      // If we had an active ticket and it's now gone → ticket was completed by staff
-      if (prevStatus.current && !['cancelled', 'missed'].includes(prevStatus.current)) {
+      consecutiveErrors.current += 1;
+      // Only treat the ticket as completed after 2+ consecutive failures to distinguish
+      // genuine ticket removal from transient network errors (common on web/iPad).
+      if (consecutiveErrors.current >= 2 && prevStatus.current && !['cancelled', 'missed'].includes(prevStatus.current)) {
         setWasCompleted(true);
+        setTicket(null);
       }
-      setTicket(null);
+      // On first error keep the last-known ticket visible so Leave Queue stays usable.
     } else {
+      consecutiveErrors.current = 0;
       // Fire toast on 'called' (urgent) or 'serving'
       if (data.status === 'called' && prevStatus.current !== 'called') {
         showToast(

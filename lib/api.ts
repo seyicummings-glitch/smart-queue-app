@@ -4,7 +4,7 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const REQUEST_TIMEOUT_MS = 8_000;   // reduced from 15s — fail faster
+const REQUEST_TIMEOUT_MS = 25_000;  // 25s — allows time for email sending via SMTP
 const SERVER_URL_KEY     = 'sqms_server_url';
 
 let _runtimeUrl: string | null = null;

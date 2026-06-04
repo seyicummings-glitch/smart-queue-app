@@ -108,6 +108,12 @@ export default function AdminMessages() {
     }
   }, [conversations]);
 
+  const handleDelete = async (id: number) => {
+    await api.delete(`/notifications/messages/${id}/delete/`);
+    setConversations(prev => prev.filter(m => m.id !== id));
+    if (selected?.id === id) setSelected(null);
+  };
+
   const openMsg = async (m: Msg) => {
     setSelected(m);
     setReplyText('');
@@ -229,6 +235,12 @@ export default function AdminMessages() {
                     </View>
                     <Text style={s.cardTime}>{timeAgo(lastReply?.created_at ?? msg.created_at)}</Text>
                     {isUnread && <View style={s.dot} />}
+                    <TouchableOpacity
+                      onPress={() => handleDelete(msg.id)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <MaterialIcons name="delete-outline" size={15} color="#e11d48" />
+                    </TouchableOpacity>
                   </View>
 
                   <Text style={s.cardTitle}>{msg.subject}</Text>

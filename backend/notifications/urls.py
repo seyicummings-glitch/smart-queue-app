@@ -3,7 +3,7 @@ from .views import (
     NotificationListView, UnreadCountView, MarkAllReadView, MarkReadView, DismissView,
     StaffMessageInboxView, StaffMessageSentView, StaffMessageCreateView,
     StaffMessageMarkReadView, StaffMessageUnreadCountView, StaffMessageReplyView,
-    StaffMessageConversationsView,
+    StaffMessageConversationsView, StaffMessageDeleteView,
 )
 
 urlpatterns = [
@@ -19,5 +19,6 @@ urlpatterns = [
     path('messages/send/',           StaffMessageCreateView.as_view(),     name='msg-send'),
     path('messages/unread-count/',   StaffMessageUnreadCountView.as_view(),name='msg-unread'),
     path('messages/<int:pk>/read/',  StaffMessageMarkReadView.as_view(),   name='msg-read'),
-    path('messages/<int:pk>/reply/', StaffMessageReplyView.as_view(),      name='msg-reply'),
+    path('messages/<int:pk>/reply/',  StaffMessageReplyView.as_view(),  name='msg-reply'),
+    path('messages/<int:pk>/delete/', StaffMessageDeleteView.as_view(), name='msg-delete'),
 ]

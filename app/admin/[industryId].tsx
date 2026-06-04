@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
+import { api } from '@/lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -85,27 +86,6 @@ function formatTitle(slug: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function getMetricsCounts(slug: string): MetricCounts {
-  // Provide realistic seed counts based on industry slug
-  const slugLower = (slug ?? '').toLowerCase();
-  if (slugLower.includes('bank') || slugLower.includes('financ')) {
-    return { services: 12, branches: 8, rules: 5, queue: 34 };
-  }
-  if (slugLower.includes('health') || slugLower.includes('hospital')) {
-    return { services: 18, branches: 6, rules: 7, queue: 52 };
-  }
-  if (slugLower.includes('retail') || slugLower.includes('shop')) {
-    return { services: 8, branches: 15, rules: 4, queue: 21 };
-  }
-  if (slugLower.includes('telecom')) {
-    return { services: 10, branches: 12, rules: 6, queue: 19 };
-  }
-  if (slugLower.includes('gov') || slugLower.includes('public')) {
-    return { services: 14, branches: 9, rules: 8, queue: 67 };
-  }
-  // Default
-  return { services: 10, branches: 5, rules: 4, queue: 22 };
-}
 
 // ─── Pulsing live dot ─────────────────────────────────────────────────────────
 
@@ -193,20 +173,29 @@ export default function AdminIndustryDetail() {
   const router = useRouter();
   const { industryId } = useLocalSearchParams<{ industryId: string }>();
 
-  const [counts, setCounts] = useState<MetricCounts>(
-    getMetricsCounts(industryId ?? '')
-  );
+  const [counts, setCounts] = useState<MetricCounts>({ services: 0, branches: 0, rules: 0, queue: 0 });
 
-  // Simulate live queue count updates every 5 seconds
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCounts((prev) => ({
-        ...prev,
-        queue: Math.max(0, prev.queue + Math.floor(Math.random() * 7) - 3),
-      }));
-    }, 5000);
-    return () => clearInterval(timer);
+  const fetchCounts = useCallback(async () => {
+    const [svcRes, brRes, ruleRes, qRes] = await Promise.all([
+      api.get<any>('/services/'),
+      api.get<any>('/branches/'),
+      api.get<any>('/queues/rules/'),
+      api.get<{ waiting: number }>('/queues/status/'),
+    ]);
+    const toLen = (d: any) => Array.isArray(d) ? d.length : (d?.results?.length ?? d?.count ?? 0);
+    setCounts({
+      services: toLen(svcRes.data),
+      branches: toLen(brRes.data),
+      rules:    toLen(ruleRes.data),
+      queue:    qRes.data?.waiting ?? 0,
+    });
   }, []);
+
+  useEffect(() => {
+    fetchCounts();
+    const t = setInterval(fetchCounts, 30_000);
+    return () => clearInterval(t);
+  }, [fetchCounts]);
 
   const displayTitle = formatTitle(industryId ?? 'Industry');
 
