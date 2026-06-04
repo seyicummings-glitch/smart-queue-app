@@ -553,16 +553,13 @@ export default function AppointmentsScreen() {
       groups = groups.filter(g => publishedIds.includes(g.industryId));
     }
     if (role === 'staff' && staffServices !== null && staffServices.length > 0) {
-      // Filter by industry — ignore services with no industry (fall back to name match)
+      // Filter strictly by assigned industry only — no name fallback to avoid
+      // cross-industry name collisions (e.g. "Customer Service" in both Banking & Retail)
       const assignedIndustries = new Set(
         staffServices.map(s => s.industry).filter(Boolean)
       );
-      const assignedNames = new Set(staffServices.map(s => s.name));
       if (assignedIndustries.size > 0) {
         groups = groups.filter(g => assignedIndustries.has(g.industryId));
-      } else {
-        // Fallback: filter by service name if industries are missing
-        groups = groups.filter(g => g.services.some(s => assignedNames.has(s.name)));
       }
     }
     return groups;
