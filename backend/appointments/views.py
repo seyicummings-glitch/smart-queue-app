@@ -30,7 +30,10 @@ class AppointmentListCreateView(generics.ListCreateAPIView):
             if user.business:
                 qs = qs.filter(branch__business__industry=user.business.industry)
         elif user.role == 'staff':
-            # Staff only sees appointments for their assigned services
+            # Filter by assigned branch
+            if user.assigned_branch:
+                qs = qs.filter(branch=user.assigned_branch)
+            # Filter by assigned services
             assigned_ids   = list(user.assigned_services.values_list('id', flat=True))
             assigned_names = list(user.assigned_services.values_list('name', flat=True))
             if assigned_ids or assigned_names:
