@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  StatusBar, Animated, ActivityIndicator, Alert,
+  StatusBar, Animated, ActivityIndicator, Alert, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import BottomNav from '@/components/BottomNav';
@@ -138,28 +138,31 @@ export default function CustomerQueueStatus() {
 
   const handleLeaveQueue = () => {
     if (!ticket) return;
-    Alert.alert(
-      'Leave Queue',
-      `Leave the queue for ${ticket.service_name}? You will lose your position and your ticket will be cancelled.`,
-      [
-        { text: 'Stay', style: 'cancel' },
-        {
-          text: 'Leave Queue',
-          style: 'destructive',
-          onPress: async () => {
-            setLeaving(true);
-            const { error } = await api.post(`/queues/${ticket.id}/cancel/`);
-            setLeaving(false);
-            if (error) {
-              Alert.alert('Error', error);
-            } else {
-              setActiveTicket(null);
-              router.replace('/customer/home' as any);
-            }
-          },
-        },
-      ],
-    );
+    const doLeave = async () => {
+      setLeaving(true);
+      const { error } = await api.post(`/queues/${ticket.id}/cancel/`);
+      setLeaving(false);
+      if (error) {
+        Alert.alert('Error', error);
+      } else {
+        setActiveTicket(null);
+        router.replace('/customer/home' as any);
+      }
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Leave the queue for ${ticket.service_name}? You will lose your position and your ticket will be cancelled.`)) {
+        doLeave();
+      }
+    } else {
+      Alert.alert(
+        'Leave Queue',
+        `Leave the queue for ${ticket.service_name}? You will lose your position and your ticket will be cancelled.`,
+        [
+          { text: 'Stay', style: 'cancel' },
+          { text: 'Leave Queue', style: 'destructive', onPress: doLeave },
+        ],
+      );
+    }
   };
 
   // ── Loading ───────────────────────────────────────────────────────────────

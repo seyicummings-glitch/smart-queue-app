@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, Modal, StatusBar, Alert, ActivityIndicator,
+  TextInput, Modal, StatusBar, Alert, ActivityIndicator, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -633,14 +633,21 @@ export default function AppointmentsScreen() {
   };
 
   const handleCancel = (id: number) => {
-    Alert.alert('Cancel Appointment', 'Are you sure?', [
-      { text: 'No', style: 'cancel' },
-      { text: 'Yes, Cancel', style: 'destructive', onPress: async () => {
-        const { data, error } = await api.post<Appointment>(`/appointments/${id}/cancel/`, {});
-        if (error) Alert.alert('Error', error);
-        else setAppointments(prev => prev.map(a => a.id === id ? data! : a));
-      }},
-    ]);
+    const doCancel = async () => {
+      const { data, error } = await api.post<Appointment>(`/appointments/${id}/cancel/`, {});
+      if (error) Alert.alert('Error', error);
+      else setAppointments(prev => prev.map(a => a.id === id ? data! : a));
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm('Cancel this appointment? This cannot be undone.')) {
+        doCancel();
+      }
+    } else {
+      Alert.alert('Cancel Appointment', 'Are you sure?', [
+        { text: 'No', style: 'cancel' },
+        { text: 'Yes, Cancel', style: 'destructive', onPress: doCancel },
+      ]);
+    }
   };
 
   const handleConfirm = async (id: number) => {
